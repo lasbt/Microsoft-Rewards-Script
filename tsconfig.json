@@ -26,6 +26,6 @@
         "forceConsistentCasingInFileNames": true,
         "resolveJsonModule": true
     },
-    "include": ["src/**/*.ts", "src/functions/bing-search-activity-queries.json", "src/functions/search-queries.json"],
+    "include": ["src/**/*.ts"],
     "exclude": ["node_modules"]
 }

@@ -9,10 +9,15 @@ import { loadSession, saveStorageState } from '../util/SessionStore'
 import { isBrowserClosedError } from '../util/Utils'
 
 import type { DashboardData } from './../interface/DashboardData'
-import type { AppUserData } from '../interface/AppUserData'
 import type { AppEarnablePoints, BrowserEarnablePoints } from '../interface/Points'
 import type { AppDashboardData } from '../interface/AppDashBoardData'
 import { detectFlyoutBotWarning, mapFlyoutToDashboard, type RewardsFlyoutData } from './FlyoutDashboard'
+
+interface AppUserData {
+    response: {
+        promotions: Array<{ attributes: Record<string, string> }>
+    }
+}
 
 export default class BrowserFunc {
     private bot: MicrosoftRewardsBot

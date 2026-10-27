@@ -35,7 +35,10 @@ export function resolveConfigPath(projectRoot: string = getProjectRoot()): strin
 }
 
 export function resolveExamplePath(projectRoot: string = getProjectRoot()): string {
-    return resolveProjectFile('config.example.json', projectRoot) ?? path.join(projectRoot, 'config.example.json')
+    return (
+        resolveProjectFile('config/config.example.json', projectRoot) ??
+        path.join(projectRoot, 'config', 'config.example.json')
+    )
 }
 
 export function readJson(filePath: string): unknown {
@@ -120,7 +123,7 @@ export function syncConfig(opts: SyncOptions = {}): SyncReport {
     const examplePath = opts.examplePath ?? resolveExamplePath(projectRoot)
 
     if (!fs.existsSync(examplePath)) {
-        throw new Error(`config.example.json not found at ${examplePath} - image may be corrupt.`)
+        throw new Error(`config/config.example.json not found at ${examplePath}.`)
     }
     const example = readJson(examplePath)
 
@@ -157,14 +160,14 @@ Usage:
 
 Options:
   --config     Path to config.json. Defaults to the project config.
-  --example    Path to config.example.json. Defaults to the project example.
+    --example    Path to config/config.example.json. Defaults to the project example.
   --patch      Add missing defaults to config.json and create a backup.
   --help       Show this help.
 
 Examples:
   node dist/util/ConfigSync.js sync
   node dist/util/ConfigSync.js sync --patch
-  node dist/util/ConfigSync.js sync --config ./config.json --example ./config.example.json
+    node dist/util/ConfigSync.js sync --config ./config.json --example ./config/config.example.json
 `)
     }
 
@@ -223,7 +226,7 @@ Examples:
             console.warn('')
             console.warn('┌──────────────────────────────────────────────────────────┐')
             console.warn('│  ⚠  CONFIG UPDATE AVAILABLE                              │')
-            console.warn('│  Missing keys (see config.example.json for defaults):    │')
+            console.warn('│  Missing keys (see config/config.example.json for defaults):    │')
             report.addedKeys.forEach(k => console.warn(('│    + ' + k).padEnd(60) + '│'))
             console.warn('│  Set CONFIG_AUTO_SYNC=true to patch automatically, or    │')
             console.warn('│  delete config.json to regenerate it from scratch.       │')

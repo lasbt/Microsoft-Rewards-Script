@@ -1,6 +1,3 @@
-import * as fs from 'fs'
-import path from 'path'
-
 import { URLs } from '../../../constants/urls'
 import type { BasePromotion, Dashboard } from '../../../interface/DashboardData'
 import type { MicrosoftRewardsBot } from '../../../index'
@@ -73,70 +70,37 @@ export function findSearchOnBingOffer(dashboard: Dashboard, offerId: string): Ba
 
 export async function getSearchOnBingQueries(bot: MicrosoftRewardsBot, promotion: BasePromotion): Promise<string[]> {
     try {
-        let activities: ActivityQueries[]
-
-        if (bot.config.searchOnBingLocalQueries) {
-            bot.logger.debug(bot.isMobile, 'SEARCH-ON-BING-QUERY', 'Using local queries config file')
-            activities = JSON.parse(
-                fs.readFileSync(path.join(__dirname, '../../bing-search-activity-queries.json'), 'utf8')
-            ) as ActivityQueries[]
-        } else {
-            bot.logger.debug(bot.isMobile, 'SEARCH-ON-BING-QUERY', 'Fetching queries config from remote repository')
-            activities = (
-                await bot.http.request<ActivityQueries[]>({
-                    method: 'GET',
-                    url: URLs.github.searchOnBingQueries
-                })
-            ).data
-        }
+        const activities = (
+            await bot.http.request<ActivityQueries[]>({
+                method: 'GET',
+                url: URLs.github.searchOnBingQueries
+            })
+        ).data
 
         const match = activities.find(
             activity => bot.utils.normalizeString(activity.title) === bot.utils.normalizeString(promotion.title)
         )
-        if (match?.queries.length) {
-            const shuffled = bot.utils.shuffleArray(match.queries)
-            bot.logger.info(
+        if (!match?.queries.length) {
+            bot.logger.warn(
                 bot.isMobile,
                 'SEARCH-ON-BING-QUERY',
-                `Found ${shuffled.length} queries for "${promotion.title}" | source=${bot.config.searchOnBingLocalQueries ? 'local' : 'remote'}`
+                `No remote queries found for "${promotion.title}"; skipping this activity`
             )
-            return shuffled
+            return []
         }
 
         bot.logger.info(
             bot.isMobile,
             'SEARCH-ON-BING-QUERY',
-            `No curated queries for "${promotion.title}", falling back to the activity title and description`
+            `Found ${match.queries.length} remote queries for "${promotion.title}"`
         )
-        return fallbackQueries(promotion)
+        return bot.utils.shuffleArray(match.queries)
     } catch (error) {
         bot.logger.error(
             bot.isMobile,
             'SEARCH-ON-BING-QUERY',
-            `Error resolving search queries | title="${promotion.title}" | message=${error instanceof Error ? error.message : String(error)} | fallback=titleAndDescription`
+            `Remote query source failed | title="${promotion.title}" | message=${error instanceof Error ? error.message : String(error)}`
         )
-        return fallbackQueries(promotion)
+        return []
     }
-}
-
-function fallbackQueries(promotion: BasePromotion): string[] {
-    const title = (promotion.title ?? '').trim()
-    const description = (promotion.description ?? '').trim()
-    const derived = extractSearchTerm(description)
-    return [...new Set([derived, title, description].map(value => value.trim()).filter(Boolean))]
-}
-
-// Microsoft currently supplies English instruction prefixes for this fallback path.
-function extractSearchTerm(description: string): string {
-    if (!description) return ''
-
-    return description
-        .trim()
-        .replace(
-            /^\s*(?:search(?:\s+on\s+bing|\s+bing|\s+the\s+web)?\s+for|look\s+up|find|explore|discover)\b[\s:]+/i,
-            ''
-        )
-        .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
-        .replace(/[.!?]+$/g, '')
-        .trim()
 }

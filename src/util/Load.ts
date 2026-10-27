@@ -144,7 +144,9 @@ export function loadAccounts(): Account[] {
         }
 
         if (!accounts.length) {
-            throw new Error('No accounts found in environment. Set at least one ACCOUNT_N_EMAIL (see env.example).')
+            throw new Error(
+                'No accounts found in environment. Set at least one ACCOUNT_N_EMAIL (see config/env.example).'
+            )
         }
 
         return validateAccounts(accounts)
@@ -160,12 +162,19 @@ export function loadConfig(): Config {
             return configCache
         }
 
-        // Check root -> dist -> src (not in dist, but root)
-        const configPath = resolveProjectFile('config.json')
+        let configPath = resolveProjectFile('config.json')
         if (!configPath) {
-            throw new Error(
-                'config.json not found - place it in the project root (dist/ and src/ are also searched as fallbacks)'
-            )
+            const examplePath = resolveProjectFile('config/config.example.json')
+            if (!examplePath)
+                throw new Error('config.json and config/config.example.json were not found in the project.')
+
+            configPath = path.join(getProjectRoot(), 'config.json')
+            try {
+                fs.copyFileSync(examplePath, configPath, fs.constants.COPYFILE_EXCL)
+                console.info(`[config] Created ${configPath} from config/config.example.json.`)
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+            }
         }
         const config = fs.readFileSync(configPath, 'utf-8')
 

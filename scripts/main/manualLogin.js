@@ -34,16 +34,6 @@ const REWARDS_HOST = 'rewards.bing.com'
 const STABLE_REWARDS_MS = 5000
 const POLL_INTERVAL_MS = 250
 
-const MANUAL_CONFIG_ENV_OVERRIDES = [
-    { env: 'CONFIG_GLOBAL_TIMEOUT', path: ['globalTimeout'], type: 'string' },
-    { env: 'CONFIG_EXPERIMENTAL_BLOCK_MEDIA', path: ['experimental', 'blockMedia'], type: 'bool' },
-    {
-        env: 'CONFIG_PROXY_IGNORE_CERTIFICATE_ERRORS',
-        path: ['proxy', 'ignoreCertificateErrors'],
-        type: 'bool'
-    }
-]
-
 const BROWSER_ARGS = [
     '--mute-audio',
     '--no-first-run',
@@ -112,38 +102,6 @@ export function isRewardsPage(rawUrl) {
     } catch {
         return false
     }
-}
-
-function setConfigValue(config, pathParts, value) {
-    let current = config
-    for (const key of pathParts.slice(0, -1)) {
-        if (!current[key] || typeof current[key] !== 'object' || Array.isArray(current[key])) current[key] = {}
-        current = current[key]
-    }
-    current[pathParts.at(-1)] = value
-}
-
-export function applyManualConfigEnvOverrides(rawConfig, env = process.env) {
-    const config = structuredClone(rawConfig)
-    const applied = []
-
-    for (const override of MANUAL_CONFIG_ENV_OVERRIDES) {
-        const raw = env[override.env]
-        if (raw === undefined || raw === '') continue
-
-        let value = raw
-        if (override.type === 'bool') {
-            if (raw !== 'true' && raw !== 'false') {
-                throw new Error(`${override.env} expects true or false, got '${raw}'.`)
-            }
-            value = raw === 'true'
-        }
-
-        setConfigValue(config, override.path, value)
-        applied.push(override.env)
-    }
-
-    return { config, applied }
 }
 
 export function resolveGlobalTimeoutMs(value) {
@@ -414,8 +372,7 @@ async function main() {
 
     const accounts = loadAccountsFromEnv(projectRoot)
     const fresh = args.fresh === true
-    const { data: fileConfig } = loadConfig(projectRoot)
-    const { config, applied: appliedConfigOverrides } = applyManualConfigEnvOverrides(fileConfig)
+    const { data: config } = loadConfig(projectRoot)
     const account = findAccountByEmail(accounts, email)
     if (!account) {
         throw new Error(`No ACCOUNT_N_* block found in .env for ${email}`)
@@ -423,7 +380,7 @@ async function main() {
 
     const { dbPath } = getSessionDbPath(projectRoot, config.sessionPath)
 
-    log('INFO', `Configuration loaded from config.json | CONFIG_* overrides=${appliedConfigOverrides.length}`)
+    log('INFO', 'Configuration loaded from config.json')
     if (config.headless) {
         log('INFO', 'config.headless=true is overridden because manual login requires a visible browser')
     }

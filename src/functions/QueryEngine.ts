@@ -1,6 +1,4 @@
 import type { HttpRequestConfig } from '../util/Http'
-import * as fs from 'fs'
-import path from 'path'
 import { XMLParser } from 'fast-xml-parser'
 
 import { URLs } from '../constants/urls'
@@ -66,7 +64,7 @@ export class QueryCore {
     async queryManager(options: QueryManagerOptions = {}): Promise<string[]> {
         const {
             shuffle = false,
-            sourceOrder = ['google', 'wikipedia', 'wikirandom', 'hackernews', 'reddit', 'local'],
+            sourceOrder = ['google', 'wikipedia', 'wikirandom', 'hackernews', 'reddit'],
             langCode = 'en',
             geoLocale = 'US'
         } = options
@@ -78,13 +76,12 @@ export class QueryCore {
                 `Building main topic pool | sources=${sourceOrder.join(',')} | shuffle=${shuffle} | lang=${langCode} | geo=${geoLocale}`
             )
 
-            const sourceHandlers: Record<QueryEngine, () => Promise<string[]> | string[]> = {
+            const sourceHandlers: Record<QueryEngine, () => Promise<string[]>> = {
                 google: () => this.getGoogleTrends(geoLocale.toUpperCase()).catch(() => []),
                 wikipedia: () => this.getWikipediaTrending(langCode).catch(() => []),
                 wikirandom: () => this.getWikipediaRandom(langCode).catch(() => []),
                 hackernews: () => this.getHackerNewsTopics().catch(() => []),
-                reddit: () => this.getRedditTopics().catch(() => []),
-                local: () => this.getLocalQueryList()
+                reddit: () => this.getRedditTopics().catch(() => [])
             }
 
             const isRss = (source: string) => source === 'rss' || source.startsWith('rss.')
@@ -547,20 +544,5 @@ export class QueryCore {
         ]
 
         return entries.map(entry => stripHtml(readTitle(entry?.title)).trim()).filter(Boolean)
-    }
-
-    getLocalQueryList(): string[] {
-        try {
-            const file = path.join(__dirname, './search-queries.json')
-            const queries = JSON.parse(fs.readFileSync(file, 'utf8')) as string[]
-            return Array.isArray(queries) ? queries : []
-        } catch (error) {
-            this.bot.logger.debug(
-                this.bot.isMobile,
-                'SEARCH-LOCAL-QUERY-LIST',
-                `Failed reading search-queries.json | ${error instanceof Error ? error.message : String(error)}`
-            )
-            return []
-        }
     }
 }

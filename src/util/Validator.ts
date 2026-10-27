@@ -2,6 +2,7 @@ import { z } from 'zod'
 import semver from 'semver'
 import ms, { StringValue } from 'ms'
 import pkg from '../../package.json'
+import defaultConfigJson from '../../config/config.example.json'
 
 import { Config } from '../interface/Config'
 import { Account } from '../interface/Account'
@@ -44,7 +45,7 @@ const DelaySchema = z
     })
 
 const QueryEngineSchema = z.union([
-    z.enum(['google', 'wikipedia', 'wikirandom', 'hackernews', 'reddit', 'local']),
+    z.enum(['google', 'wikipedia', 'wikirandom', 'hackernews', 'reddit']),
     z
         .string()
         .regex(/^rss(\.[A-Za-z0-9_-]+){0,2}$/, 'Invalid rss selector (use rss, rss.<site>, or rss.<site>.<endpoint>)')
@@ -131,7 +132,6 @@ export const ConfigSchema = z.object({
             searchOnBing: z.boolean().default(true)
         })
         .default({ urlReward: true, searchOnBing: true }),
-    searchOnBingLocalQueries: z.boolean(),
     globalTimeout: NumberOrString,
     searchSettings: z.object({
         scrollRandomResults: z.boolean(),
@@ -245,73 +245,7 @@ export const AccountSchema = z.object({
     })
 })
 
-const defaultConfig: Config = {
-    sessionPath: 'sessions',
-    headless: true,
-    clusters: 1,
-    errorDiagnostics: true,
-    ensureStreakProtection: true,
-    autoClaimPunchcardRewards: false,
-    contintueOnBotWarning: false,
-    skipNonPointTasks: true,
-    accountDelay: { min: '1min', max: '3min' },
-    workers: {
-        doDailySet: true,
-        doMorePromotions: true,
-        doClaimBonusPoints: true,
-        doPunchCards: true,
-        doAppPromotions: true,
-        doDesktopSearch: true,
-        doMobileSearch: true,
-        doBonusSearches: false,
-        doDailyCheckIn: true,
-        doReadToEarn: true,
-        doActivateSearchPerk: true,
-        doVisualSearch: false
-    },
-    activities: {
-        urlReward: true,
-        searchOnBing: true
-    },
-    searchOnBingLocalQueries: false,
-    globalTimeout: '30sec',
-    searchSettings: {
-        scrollRandomResults: true,
-        clickRandomResults: true,
-        runOnZeroPoints: false,
-        maxBonusSearches: 110,
-        parallelSearching: true,
-        clusterSearch: true,
-        queryEngines: ['google', 'wikipedia', 'wikirandom', 'hackernews', 'reddit', 'local'],
-        searchResultVisitTime: '10sec',
-        searchDelay: { min: '30sec', max: '1min' },
-        readDelay: { min: '30sec', max: '1min' }
-    },
-    experimental: {
-        apiSearch: false,
-        apiSearchOnBing: false,
-        blockMedia: false,
-        edgeBrowsing: false
-    },
-    debugLogs: false,
-    proxy: { queryEngine: true, ignoreCertificateErrors: false },
-    consoleLogFilter: {
-        enabled: false,
-        mode: 'whitelist',
-        levels: ['info', 'warn', 'error'],
-        keywords: [],
-        regexPatterns: []
-    },
-    webhook: {
-        webhookLogFilter: {
-            enabled: false,
-            mode: 'whitelist',
-            levels: ['warn', 'error'],
-            keywords: [],
-            regexPatterns: []
-        }
-    }
-}
+const defaultConfig = ConfigSchema.parse(defaultConfigJson)
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
     return typeof v === 'object' && v !== null && !Array.isArray(v)

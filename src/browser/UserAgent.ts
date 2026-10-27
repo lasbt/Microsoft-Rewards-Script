@@ -2,9 +2,21 @@ import { URLs } from '../constants/urls'
 import { httpRequest } from '../util/Http'
 import type { BrowserFingerprintWithHeaders } from 'fingerprint-generator'
 
-import { BROWSER_VERSION_FALLBACKS } from '../constants/browserVersions'
-import type { ChromeVersion, EdgeVersion } from '../interface/UserAgentUtil'
 import type { MicrosoftRewardsBot } from '../index'
+
+const VERSION_FALLBACKS = {
+    chrome: '151.0.7922.76',
+    edge: { android: '151.0.4129.59', windows: '151.0.4129.59' }
+} as const
+
+interface ChromeVersion {
+    channels: { Stable: { version: string } }
+}
+
+interface EdgeVersion {
+    Product: string
+    Releases: Array<{ Platform: string; Architecture: string; ProductVersion: string }>
+}
 
 interface EdgeVersions {
     android: string
@@ -173,7 +185,7 @@ export class UserAgentManager {
             }
             return version
         } catch (error) {
-            const fallback = BROWSER_VERSION_FALLBACKS.chrome
+            const fallback = VERSION_FALLBACKS.chrome
             this.bot.logger.warn(
                 isMobile,
                 'USERAGENT-CHROME-VERSION',
@@ -215,7 +227,7 @@ export class UserAgentManager {
 
             return { android, desktop }
         } catch (error) {
-            const fallback = BROWSER_VERSION_FALLBACKS.edge
+            const fallback = VERSION_FALLBACKS.edge
             this.bot.logger.warn(
                 isMobile,
                 'USERAGENT-EDGE-VERSION',

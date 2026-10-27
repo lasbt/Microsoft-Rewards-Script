@@ -29,7 +29,6 @@
         "urlReward": true,
         "searchOnBing": true
     },
-    "searchOnBingLocalQueries": false,
     "globalTimeout": "30sec",
     "searchSettings": {
         "scrollRandomResults": false,
@@ -44,7 +43,6 @@
             "wikirandom",
             "hackernews",
             "reddit",
-            "local",
             "rss.googleTrends",
             "rss.googleNews",
             "rss.bbc",

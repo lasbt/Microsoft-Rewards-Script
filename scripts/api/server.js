@@ -14,7 +14,7 @@ import {
     diffConfig,
     syncMissingDefaults
 } from './configEditor.js'
-import { readSchedule, writeSchedule } from './scheduleStore.js'
+import { matchesCron, readSchedule, writeSchedule } from './scheduleStore.js'
 import { deleteStoredSessions, listStoredSessions } from './sessionStore.js'
 import { resolveRunCommand } from './runCommand.js'
 import {
@@ -799,6 +799,46 @@ function serveDiagnosticFile(res, pathname) {
     fs.createReadStream(full).pipe(res)
 }
 
+let scheduleTimer
+let lastScheduleMinute = -1
+let lastScheduleError = ''
+
+function checkScheduledRun() {
+    const now = new Date()
+    const currentMinute = Math.floor(now.getTime() / 60000)
+    if (currentMinute === lastScheduleMinute) return
+    lastScheduleMinute = currentMinute
+
+    try {
+        const schedule = readSchedule(projectRoot)
+        lastScheduleError = ''
+        if (!schedule.enabled || !schedule.cron || !matchesCron(schedule.cron, now)) return
+        if (pm.getStatus().state !== 'idle') {
+            pm.note('warn', 'Scheduled run skipped because another run is still in progress.')
+            return
+        }
+
+        const env = schedule.excludedAccountIndexes.length
+            ? buildExcludedAccountsEnv(schedule.excludedAccountIndexes).env
+            : undefined
+        const { pid } = pm.start(env ? { env } : {})
+        pm.note('info', `Scheduled run started for ${schedule.cron} (${schedule.timezone}); pid ${pid ?? 'pending'}.`)
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message !== lastScheduleError) pm.note('error', `Scheduled run could not start: ${message}`)
+        lastScheduleError = message
+    }
+}
+
+function armScheduleTimer() {
+    const delay = 60000 - (Date.now() % 60000) + 25
+    scheduleTimer = setTimeout(() => {
+        checkScheduledRun()
+        armScheduleTimer()
+    }, delay)
+    scheduleTimer.unref?.()
+}
+
 // startup
 const server = http.createServer(requestHandler)
 
@@ -841,6 +881,8 @@ server.listen(PORT, HOST, () => {
         auth: Boolean(TOKEN)
     }
     process.stdout.write(`__API_READY__ ${JSON.stringify(ready)}\n`)
+    checkScheduledRun()
+    armScheduleTimer()
 })
 
 let shuttingDown = false
@@ -848,6 +890,7 @@ async function shutdown(signal, { force = false } = {}) {
     if (shuttingDown) return
     shuttingDown = true
     log('INFO', `${signal} received - shutting down.`)
+    clearTimeout(scheduleTimer)
     server.close()
     try {
         if (pm.getStatus().state !== 'idle') {

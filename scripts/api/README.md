@@ -15,8 +15,8 @@ The API can:
 - list stored session metadata and delete the mobile/desktop sessions belonging
   to one account;
 - read `config.json` and, when explicitly enabled, validate and update it;
-- read the effective cron schedule and, in Docker API mode, persist and apply
-  schedule changes without restarting the container.
+- read and persist the effective cron schedule while the API process is
+  running.
 
 It uses only Node.js built-ins and follows the same ESM `.js` convention as the
 other scripts in the project.
@@ -91,7 +91,6 @@ other scripts in the project.
         - [Development terminal](#development-terminal)
         - [PM2](#pm2)
         - [systemd](#systemd)
-        - [Docker](#docker)
     - [Startup readiness](#startup-readiness)
     - [File layout](#file-layout)
 
@@ -128,9 +127,8 @@ disabled by default and require separate opt-in environment variables:
 - `PUT` or `PATCH /config` updates `config.json`. The previous file is copied to
   `config.json.bak` on a best-effort basis before replacement.
 - `PUT` or `PATCH /schedule` writes `config/schedule.json` atomically and applies
-  the cron change immediately. The file lives in the existing Docker `./config`
-  volume, so it survives container restarts and takes precedence over
-  `CRON_SCHEDULE`.
+  the change to the API's in-process scheduler. The file survives API restarts
+  and takes precedence over `CRON_SCHEDULE`.
 - `DELETE /sessions/:email` removes only the matching account rows from the
   bot's existing `sessions.db`. The API never exposes stored cookies or
   fingerprint contents and has no delete-all session route.
@@ -427,17 +425,17 @@ server itself remains dependency-free.
 
 ### Control and write endpoints
 
-| Method   | Path               | Purpose                                                 |
-| -------- | ------------------ | ------------------------------------------------------- |
-| `POST`   | `/start`           | Start a bot run.                                        |
-| `POST`   | `/stop`            | Request graceful or forced process termination.         |
-| `POST`   | `/restart`         | Stop an active run, then start a new one.               |
-| `POST`   | `/shutdown`        | Stop the bot if needed and terminate the API process.   |
-| `DELETE` | `/sessions/:email` | Delete only one account's mobile and desktop sessions.  |
-| `PUT`    | `/config`          | Replace the complete config after validation.           |
-| `PATCH`  | `/config`          | Deep-merge a partial config after validation.           |
-| `PUT`    | `/schedule`        | Persist and immediately apply supplied schedule fields. |
-| `PATCH`  | `/schedule`        | Persist and immediately apply supplied schedule fields. |
+| Method   | Path               | Purpose                                                |
+| -------- | ------------------ | ------------------------------------------------------ |
+| `POST`   | `/start`           | Start a bot run.                                       |
+| `POST`   | `/stop`            | Request graceful or forced process termination.        |
+| `POST`   | `/restart`         | Stop an active run, then start a new one.              |
+| `POST`   | `/shutdown`        | Stop the bot if needed and terminate the API process.  |
+| `DELETE` | `/sessions/:email` | Delete only one account's mobile and desktop sessions. |
+| `PUT`    | `/config`          | Replace the complete config after validation.          |
+| `PATCH`  | `/config`          | Deep-merge a partial config after validation.          |
+| `PUT`    | `/schedule`        | Persist schedule fields for the in-process scheduler.  |
+| `PATCH`  | `/schedule`        | Persist schedule fields for the in-process scheduler.  |
 
 ## Reading API state
 
@@ -1486,7 +1484,7 @@ console.log(data)
 ```
 
 Use this carefully: after the response, the API port becomes unavailable until
-the service is started again by the terminal, PM2, systemd, Docker, or another
+the service is started again by the terminal, PM2, systemd, or another process
 supervisor.
 
 ## Live event stream with SSE
@@ -1749,18 +1747,17 @@ When writes are disabled, `PUT` and `PATCH` return `403 Forbidden`.
 
 ## Reading and editing the schedule
 
-The schedule endpoints expose the cron schedule used by the Docker-integrated
-API mode. Reading is always available. Writing must be explicitly enabled and
-is intended for the Docker image, where the cron template and `crontab` command
-are present.
+The schedule endpoints expose the cron schedule checked by the API process.
+Reading is always available. Writing must be explicitly enabled. No system
+cron installation or external scheduler is used.
 
 The effective schedule comes from one of two sources:
 
 1. `config/schedule.json`, after a schedule has been written through the API;
-2. `CRON_SCHEDULE`, when no persisted override exists.
+2. `CRON_SCHEDULE` from the API process environment, when no persisted override
+   exists.
 
-A persisted override takes precedence over `CRON_SCHEDULE` across container
-restarts because the file is stored in the existing `./config` volume.
+A persisted override takes precedence over `CRON_SCHEDULE` across API restarts.
 
 ### `GET /schedule`
 
@@ -1800,13 +1797,13 @@ Fields:
 
 - `enabled`: whether a cron job should be installed;
 - `cron`: the effective five-field cron expression, or `null` when none exists;
-- `skipIfRunning`: stored scheduler preference. The integrated Docker trigger
-  already exits cleanly when another run is active;
+- `skipIfRunning`: stored for clients; scheduled occurrences are skipped while
+  another run is active;
 - `excludedAccountIndexes`: original `ACCOUNT_<N>` slots omitted from scheduled
   runs;
 - `updatedAt`: time the persisted override was last written, otherwise `null`;
-- `timezone`: the active `TZ` value. Change `TZ` in the container environment,
-  not through this endpoint;
+- `timezone`: the active `TZ` value or the host's local timezone. Set `TZ` in
+  the API process environment;
 - `source`: `env` for `CRON_SCHEDULE` or `override` for
   `config/schedule.json`;
 - `writable`: whether `API_ALLOW_SCHEDULE_WRITE=true` is active.
@@ -1821,17 +1818,17 @@ API_ALLOW_SCHEDULE_WRITE=true
 
 For this endpoint, `PUT` and `PATCH` have the same partial-update behavior: only
 fields present in the JSON body are changed. The result is written atomically to
-`config/schedule.json`, then the live crontab is replaced immediately. A
-container restart is not required.
+`config/schedule.json`; the running API reads it on its next minute check. An
+API restart is not required.
 
 Supported body fields:
 
-| Field                    | Type                   | Description                                                                |
-| ------------------------ | ---------------------- | -------------------------------------------------------------------------- |
-| `enabled`                | boolean                | Install or remove the cron job. Enabling requires a valid `cron` value.    |
-| `cron`                   | string                 | Numeric five-field cron expression, such as `0 7 * * *`.                   |
-| `skipIfRunning`          | boolean                | Scheduler preference retained in the persisted schedule.                   |
-| `excludedAccountIndexes` | positive integer array | Account slots excluded when cron or `RUN_ON_START` triggers a run via API. |
+| Field                    | Type                   | Description                                                               |
+| ------------------------ | ---------------------- | ------------------------------------------------------------------------- |
+| `enabled`                | boolean                | Enable or disable scheduled runs. Enabling requires a valid `cron` value. |
+| `cron`                   | string                 | Numeric five-field cron expression, such as `0 7 * * *`.                  |
+| `skipIfRunning`          | boolean                | Scheduler preference retained in the persisted schedule.                  |
+| `excludedAccountIndexes` | positive integer array | Account slots excluded from scheduled runs.                               |
 
 The cron parser accepts `*`, numeric values, comma-separated values, ranges,
 and steps within the normal five-field ranges. Named months/weekdays and macros
@@ -1879,16 +1876,13 @@ Disable the saved schedule without deleting its other settings:
 await api.patch('/schedule', { enabled: false })
 ```
 
-Disabling removes the live crontab, but the override file remains authoritative.
-To return to the original `CRON_SCHEDULE` environment default, delete
-`config/schedule.json` and restart the container. There is no `DELETE /schedule`
-endpoint.
+Disabling leaves the override file authoritative. To return to the original
+`CRON_SCHEDULE` environment default, delete `config/schedule.json` and restart
+the API. There is no `DELETE /schedule` endpoint.
 
 Invalid cron expressions, non-array exclusions, non-positive indexes, or
 enabling without a cron expression return `400 Bad Request`. When writes are
-disabled, both methods return `403 Forbidden`. Outside the supplied Docker
-image, a write can return `500` if the cron template or `crontab` executable is
-not available.
+disabled, both methods return `403 Forbidden`.
 
 ## Axios response and error handling
 
@@ -2003,7 +1997,7 @@ All variables are optional.
 
 | Variable                   | Default                       | Purpose                                                                                     |
 | -------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------- |
-| `API_HOST`                 | `127.0.0.1`                   | Interface to bind. Use `0.0.0.0` only when remote/container access is required.             |
+| `API_HOST`                 | `127.0.0.1`                   | Interface to bind. Use `0.0.0.0` only when remote access is required.                       |
 | `API_PORT`                 | `3010`                        | HTTP listen port.                                                                           |
 | `API_TOKEN`                | unset                         | Shared token required by every endpoint when configured.                                    |
 | `API_CORS_ORIGIN`          | `*`                           | Value returned in `Access-Control-Allow-Origin`.                                            |
@@ -2019,12 +2013,8 @@ All variables are optional.
 | `API_ALLOW_CONFIG_REVEAL`  | `false`                       | Permit authenticated `GET /config?reveal=1`.                                                |
 | `API_VALIDATOR_MODULE`     | auto                          | Path to a compiled module exporting `validateConfig` or `ConfigSchema`.                     |
 | `SCHEDULE_FILE`            | `<repo>/config/schedule.json` | Override the persisted schedule file path.                                                  |
-| `CRON_SCHEDULE`            | unset                         | Base schedule reported and used when no persisted schedule override exists.                 |
-| `TZ`                       | `UTC`                         | Timezone used by cron and returned by `/schedule`.                                          |
-
-The Docker entrypoint also uses `API_MODE=true` to run this API as the main
-container process. In that mode, scheduled and `RUN_ON_START` executions are
-routed through `POST /start`, so the API can observe and control them.
+| `CRON_SCHEDULE`            | unset                         | Base schedule when no persisted schedule override exists.                                   |
+| `TZ`                       | host local timezone           | Timezone used by the scheduler and returned by `/schedule`.                                 |
 
 The equivalent CLI flags are `--host`, `--port`, and `--token`:
 
@@ -2103,34 +2093,6 @@ ExecStart=/usr/bin/node /opt/microsoft-rewards-script/scripts/api/server.js
 Restart=on-failure
 ```
 
-### Docker
-
-Enable API mode, authenticate it, and publish the port in `compose.yaml`:
-
-```yaml
-services:
-    microsoft-rewards-script:
-        environment:
-            API_MODE: 'true'
-            API_TOKEN: '${API_TOKEN}'
-            API_ALLOW_SCHEDULE_WRITE: 'true' # optional
-            API_ALLOW_CONFIG_WRITE: 'true' # optional
-        ports:
-            - '3010:3010'
-```
-
-Put the matching token in `.env`:
-
-```dotenv
-API_TOKEN=replace-with-a-long-random-token
-```
-
-The supplied Docker entrypoint defaults `API_HOST` to `0.0.0.0` in API mode so
-the published port is reachable. `CRON_SCHEDULE` remains the base schedule until
-`PUT` or `PATCH /schedule` creates `./config/schedule.json`. Cron-triggered and
-`RUN_ON_START` executions call the local API, so they appear in `/status`,
-`/logs`, `/points`, `/events`, and `/history` just like manual runs.
-
 ## Startup readiness
 
 After the HTTP server begins listening, it writes one machine-readable line to
@@ -2153,9 +2115,7 @@ starting a second unusable instance.
 | `logParser.js`      | Structured log parsing and live run/point accumulation.                               |
 | `accounts.js`       | Safe account summaries and child-only account selection/remapping.                    |
 | `configEditor.js`   | Config loading, validation, deep merge, backup, and atomic replacement.               |
-| `scheduleStore.js`  | Schedule validation, persistence, reads, and live crontab application.                |
+| `scheduleStore.js`  | Schedule validation, persistence, and reads.                                          |
 | `sessionStore.js`   | Safe session metadata reads and account-specific SQLite session deletion.             |
-| `apply-schedule.js` | Restores a persisted schedule override during Docker startup.                         |
-| `trigger.js`        | Routes Docker cron and `RUN_ON_START` executions through the local API.               |
 | `runCommand.js`     | Cross-platform resolution of the command used to launch the bot.                      |
 | `lib.js`            | Environment, project-root, logging, config-redaction, and argument helpers.           |

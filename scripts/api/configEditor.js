@@ -50,7 +50,6 @@ const BOOL_KEYS = [
     'ensureStreakProtection',
     'autoClaimPunchcardRewards',
     'skipNonPointTasks',
-    'searchOnBingLocalQueries',
     'debugLogs'
 ]
 
@@ -142,7 +141,7 @@ function structuralValidate(cfg) {
                     search.queryEngines.some(
                         engine =>
                             typeof engine !== 'string' ||
-                            !/^(?:google|wikipedia|wikirandom|hackernews|reddit|local|rss(?:\.[A-Za-z0-9_-]+){0,2})$/.test(
+                            !/^(?:google|wikipedia|wikirandom|hackernews|reddit|rss(?:\.[A-Za-z0-9_-]+){0,2})$/.test(
                                 engine
                             )
                     ))
