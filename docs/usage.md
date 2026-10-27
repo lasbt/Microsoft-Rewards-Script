@@ -1,5 +1,31 @@
 # Uso
 
+## Instalação
+
+Requisitos: Node.js 24 ou mais recente, npm, Windows/Linux/macOS/WSL e acesso à
+internet. Em Linux, Chromium pode exigir bibliotecas de sistema adicionais.
+
+```bash
+git clone https://github.com/lasbt/Microsoft-Rewards-Script.git
+cd Microsoft-Rewards-Script
+npm install
+npm run install:browser
+```
+
+Copie `config/env.example` para `.env` e informe ao menos um
+`ACCOUNT_N_EMAIL`. `config.json` é criado de `config/config.example.json` na
+primeira inicialização e nunca sobrescreve uma configuração existente. Também
+é possível criar os arquivos manualmente:
+
+```bash
+cp config/env.example .env
+cp config/config.example.json config.json
+```
+
+No PowerShell, use `Copy-Item` com os mesmos caminhos. Compile com
+`npm run build` e execute com `npm run start`. O login manual precisa de sessão
+gráfica para abrir o Chromium.
+
 ## Aplicação principal
 
 Compile com `npm run build` e execute com `npm run start`. Use `npm run dev`
@@ -49,3 +75,23 @@ npm run lint
 npm run format:check
 npm run build
 ```
+
+## Diagnóstico
+
+Se o navegador não iniciar, rode `npm run install:browser`. No Linux, instale
+as bibliotecas de sistema exigidas pelo Chromium. Para erros de configuração,
+compare `config.json` com `config/config.example.json`; contas usam os nomes
+`ACCOUNT_N_*` de `config/env.example` e exigem ao menos um e-mail.
+
+Se o login se repetir, liste sessões com `npm run clear-sessions -- list`,
+remova apenas a conta afetada com `npm run clear-sessions -- email
+pessoa@example.com` e refaça o login manual. Sessões contêm cookies e não devem
+ser compartilhadas.
+
+Para uma agenda, a API precisa continuar ativa; verifique `GET /schedule`, o
+fuso local ou `TZ` e se `API_ALLOW_SCHEDULE_WRITE=true` estava definido ao
+alterá-la. A API escuta em loopback por padrão. Para acesso remoto, configure
+`API_TOKEN` e use uma rede confiável.
+
+Consulte a [referência da API](../scripts/api/README.md) para erros HTTP,
+autenticação e configuração detalhada.

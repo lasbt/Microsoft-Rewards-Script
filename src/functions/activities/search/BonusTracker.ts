@@ -1,10 +1,19 @@
 import type { Dashboard } from '../../../interface/DashboardData'
-import type { SearchTracker } from '../../../interface/Search'
 import type { MicrosoftRewardsBot } from '../../../index'
 
 const BONUS_STAGNANT_LIMIT = 20
 
 const BING_TRACKING_PARAMS = new Set(['form', 'ocid', 'publ', 'crea', 'pc', 'channel', 'mkt', 'cc', 'setlang'])
+
+export interface SearchTracker {
+    readonly context: string
+    readonly maxSearches: number
+    readonly stagnantLimit: number
+    prepare(): Promise<boolean>
+    measure(): Promise<number>
+    done(): boolean
+    progress(): string
+}
 
 export class BonusTracker implements SearchTracker {
     public readonly context = 'SEARCH-BONUS'

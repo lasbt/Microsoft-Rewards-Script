@@ -3,16 +3,31 @@ import { XMLParser } from 'fast-xml-parser'
 
 import { URLs } from '../constants/urls'
 import { RSS_FEEDS } from '../constants/rssFeeds'
-import type {
-    GoogleSearch,
-    GoogleTrendsResponse,
-    HackerNewsResponse,
-    RedditListing,
-    WikipediaRandomResponse,
-    WikipediaTopResponse
-} from '../interface/Search'
 import type { QueryEngine, QueryEngineEntry } from '../interface/Config'
 import type { MicrosoftRewardsBot } from '../index'
+
+type GoogleTrendsResponse = [string, [string, ...null[], [string, ...string[]]][]]
+
+interface GoogleSearch {
+    topic: string
+    related: string[]
+}
+
+interface WikipediaTopResponse {
+    items: Array<{ articles: Array<{ article: string; views: number }> }>
+}
+
+interface RedditListing {
+    data: { children: Array<{ data: { title: string; over_18: boolean } }> }
+}
+
+interface HackerNewsResponse {
+    hits: Array<{ title: string | null }>
+}
+
+interface WikipediaRandomResponse {
+    query?: { random?: Array<{ id: number; ns: number; title: string }> }
+}
 
 const GOOGLE_TRENDS_RPC_ID = 'i0OFE'
 const MAX_CLUSTER_SUGGESTIONS = 8

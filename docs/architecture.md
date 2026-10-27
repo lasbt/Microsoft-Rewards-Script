@@ -41,3 +41,28 @@ alterar a lista original.
 Ctrl+C e SIGTERM iniciam a limpeza. O bot descarrega filas de notificação e
 fecha o armazenamento de sessão; a API interrompe o processo filho e limpa o
 timer. A API também oferece endpoints explícitos para parar e reiniciar.
+
+## Módulos e manutenção
+
+| Caminho                        | Responsabilidade                                        |
+| ------------------------------ | ------------------------------------------------------- |
+| `src/index.ts`                 | Ciclo de vida, coordenação de contas, workers e limpeza |
+| `src/browser/`                 | Contextos Chromium, ações de página e autenticação      |
+| `src/functions/Activities.ts`  | Encaminha o trabalho às atividades                      |
+| `src/functions/activities/`    | Fluxos Rewards, app, busca e atividades experimentais   |
+| `src/functions/QueryEngine.ts` | Consulta fontes externas e monta tópicos                |
+| `src/util/Load.ts`             | Lê `.env`, carrega contas e inicializa configuração     |
+| `src/util/Validator.ts`        | Schemas, padrões e validação de entrada                 |
+| `src/util/SessionStore.ts`     | Persistência SQLite das sessões                         |
+| `src/logging/`                 | Console e filas de notificações                         |
+| `scripts/main/`                | Login manual e comandos para sessões                    |
+| `scripts/api/`                 | API HTTP, execução de processos e agenda                |
+
+Para adicionar uma preferência, atualize `config/config.example.json`, o tipo
+em `src/interface/Config.ts` e o schema em `src/util/Validator.ts`. Campos de
+conta pertencem a `config/env.example` e são mapeados em `src/util/Load.ts`.
+Altere uma atividade no seu grupo em `src/functions/activities/`; use
+`src/functions/Activities.ts` para encaminhá-la e `src/index.ts` para ajustar
+quando executa. Fontes de busca ficam em `src/functions/QueryEngine.ts` e feeds
+RSS em `src/constants/rssFeeds.ts`. Mantenha os fluxos nas responsabilidades
+existentes e evite wrappers para chamadas únicas.
