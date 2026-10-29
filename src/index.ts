@@ -26,8 +26,6 @@ import { SearchManager } from './functions/activities/search/SearchManager'
 import type { Account } from './interface/Account'
 import HttpClient from './util/Http'
 import { sendDiscord, flushDiscordQueue } from './logging/Discord'
-import { sendNtfy, flushNtfyQueue } from './logging/Ntfy'
-import { sendTelegram, flushTelegramQueue } from './logging/Telegram'
 import type { DashboardData } from './interface/DashboardData'
 import type { AppDashboardData } from './interface/AppDashBoardData'
 import type { AppEarnablePoints } from './interface/Points'
@@ -69,7 +67,7 @@ export function getCurrentContext(): ExecutionContext {
 }
 
 async function flushAllWebhooks(timeoutMs = 5000): Promise<void> {
-    await Promise.allSettled([flushDiscordQueue(timeoutMs), flushNtfyQueue(timeoutMs), flushTelegramQueue(timeoutMs)])
+    await flushDiscordQueue(timeoutMs)
     closeSessionStore()
 }
 
@@ -134,7 +132,7 @@ export class MicrosoftRewardsBot {
             currentPoints: 0,
             gainedPoints: 0
         }
-        this.accountLocale = resolveAccountLocale({ langCode: 'en', geoLocale: 'US' })
+        this.accountLocale = resolveAccountLocale({ region: 'US' })
         this.logger = new Logger(this)
         this.accounts = []
         this.cookies = { mobile: [], desktop: [] }
@@ -314,12 +312,6 @@ export class MicrosoftRewardsBot {
                     if (webhook.discord?.enabled && webhook.discord.url) {
                         sendDiscord(webhook.discord.url, content, level)
                     }
-                    if (webhook.ntfy?.enabled && webhook.ntfy.url) {
-                        sendNtfy(webhook.ntfy, content, level)
-                    }
-                    if (webhook.telegram?.enabled && webhook.telegram.botToken && webhook.telegram.chatId) {
-                        sendTelegram(webhook.telegram, content, level)
-                    }
                 }
             })
         }
@@ -420,8 +412,7 @@ export class MicrosoftRewardsBot {
             this.userData.timezoneOffset = String(new Date().getTimezoneOffset())
 
             try {
-                const cachedRegion =
-                    account.geoLocale === 'auto' ? loadResolvedRegion(this.config.sessionPath, accountEmail) : undefined
+                const cachedRegion = account.region ? undefined : loadResolvedRegion(this.config.sessionPath, accountEmail)
                 this.accountLocale = resolveAccountLocale(account, cachedRegion)
                 this.userData.langCode = this.accountLocale.language
                 this.userData.geoLocale = this.accountLocale.country ?? 'US'
@@ -429,7 +420,7 @@ export class MicrosoftRewardsBot {
                 this.logger.info(
                     'main',
                     'ACCOUNT-START',
-                    `Starting account: ${accountEmail} | geoLocale: ${account.geoLocale} | locale: ${this.accountLocale.locale}${
+                    `Starting account: ${accountEmail} | region: ${account.region ?? 'auto'} | locale: ${this.accountLocale.locale}${
                         cachedRegion ? ` | cachedRegion: ${cachedRegion}` : ''
                     }`
                 )
@@ -665,13 +656,13 @@ export class MicrosoftRewardsBot {
                 if (hasBotScoreWarning) {
                     const availablePoints = data.dashboard.userStatus.availablePoints ?? 0
 
-                    if (!this.config.contintueOnBotWarning) {
+                    if (!this.config.continueOnBotWarning) {
                         this.logger.warn(
                             'main',
                             'BOT-WARNING',
                             `Microsoft Rewards reported Fraud_UserWarning_BotScore_UX for ${accountEmail}. ` +
                                 'This account will be skipped for safety. The preferred action is to stop automation for this account and wait a few days. ' +
-                                'To continue anyway (not recommended), set "contintueOnBotWarning": true.'
+                                'To continue anyway (not recommended), set "continueOnBotWarning": true.'
                         )
 
                         return {
@@ -684,14 +675,14 @@ export class MicrosoftRewardsBot {
                     this.logger.warn(
                         'main',
                         'BOT-WARNING',
-                        `Microsoft Rewards reported Fraud_UserWarning_BotScore_UX for ${accountEmail}, but contintueOnBotWarning=true. ` +
+                        `Microsoft Rewards reported Fraud_UserWarning_BotScore_UX for ${accountEmail}, but continueOnBotWarning=true. ` +
                             'Continuing as configured is not recommended; waiting a few days is the preferred action.'
                     )
                 }
 
                 const profileCountry = normalizeCountry(data.dashboard.userProfile.attributes.country)
 
-                if (account.geoLocale === 'auto') {
+                if (!account.region) {
                     if (profileCountry) {
                         saveResolvedRegion(this.config.sessionPath, accountEmail, profileCountry)
                     } else {

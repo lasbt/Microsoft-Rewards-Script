@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 
-import type { Account, AccountProxy, ConfigSaveFingerprint } from '../interface/Account'
+import type { Account } from '../interface/Account'
 import type { Config } from '../interface/Config'
 import { validateAccounts, validateConfig } from './Validator'
 
@@ -69,87 +69,37 @@ function envStr(key: string): string | undefined {
     return trimmed.length ? trimmed : undefined
 }
 
-function envBool(key: string, fallback: boolean): boolean {
-    const v = envStr(key)
-    if (v === undefined) return fallback
-    return ['1', 'true', 'yes', 'on'].includes(v.toLowerCase())
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-const deprecationWarned = new Set<string>()
-function envBoolWithLegacy(primary: string, legacy: string, fallback: boolean): boolean {
-    if (envStr(primary) !== undefined) return envBool(primary, fallback)
-    if (envStr(legacy) !== undefined) {
-        if (!deprecationWarned.has(legacy)) {
-            deprecationWarned.add(legacy)
-            console.warn(`[Accounts] ${legacy} is deprecated; rename it to ${primary}.`)
-        }
-        return envBool(legacy, fallback)
+function mergeConfig(base: unknown, override: unknown): unknown {
+    if (!isRecord(base) || !isRecord(override)) return override
+    const merged = { ...base }
+    for (const [key, value] of Object.entries(override)) {
+        merged[key] = key in base ? mergeConfig(base[key], value) : value
     }
-    return fallback
+    return merged
 }
 
-function envInt(key: string, fallback: number): number {
-    const v = envStr(key)
-    if (v === undefined) return fallback
-    const n = parseInt(v, 10)
-    return Number.isFinite(n) ? n : fallback
-}
-
-function buildProxy(index: string): AccountProxy {
-    return {
-        proxyHttp: envBoolWithLegacy(`ACCOUNT_${index}_PROXY_HTTP`, `ACCOUNT_${index}_PROXY_AXIOS`, false),
-        url: envStr(`ACCOUNT_${index}_PROXY_URL`) ?? '',
-        port: envInt(`ACCOUNT_${index}_PROXY_PORT`, 0),
-        username: envStr(`ACCOUNT_${index}_PROXY_USERNAME`) ?? '',
-        password: envStr(`ACCOUNT_${index}_PROXY_PASSWORD`) ?? ''
+function parseAccounts(value: string): unknown[] {
+    let accounts: unknown
+    try {
+        accounts = JSON.parse(value)
+    } catch (error) {
+        throw new Error(`ACCOUNTS_JSON must contain valid JSON: ${error instanceof Error ? error.message : error}`)
     }
-}
-
-function buildSaveFingerprint(index: string): ConfigSaveFingerprint {
-    return {
-        mobile: envBool(`ACCOUNT_${index}_SAVE_FINGERPRINT_MOBILE`, false),
-        desktop: envBool(`ACCOUNT_${index}_SAVE_FINGERPRINT_DESKTOP`, false)
-    }
-}
-
-function getAccountIndexes(): string[] {
-    return Object.keys(process.env)
-        .map(key => /^ACCOUNT_([1-9]\d*)_EMAIL$/.exec(key)?.[1])
-        .filter((index): index is string => Boolean(index && envStr(`ACCOUNT_${index}_EMAIL`)))
-        .sort((a, b) => Number(a) - Number(b))
+    if (!Array.isArray(accounts)) throw new Error('ACCOUNTS_JSON must be a JSON array of account objects.')
+    return accounts
 }
 
 export function loadAccounts(): Account[] {
     try {
         ensureEnvLoaded()
 
-        const accounts: Account[] = []
-
-        for (const index of getAccountIndexes()) {
-            const email = envStr(`ACCOUNT_${index}_EMAIL`)
-            if (!email) continue
-
-            const password = envStr(`ACCOUNT_${index}_PASSWORD`) ?? ''
-
-            accounts.push({
-                email,
-                password,
-                totpSecret: envStr(`ACCOUNT_${index}_TOTP_SECRET`),
-                recoveryEmail: envStr(`ACCOUNT_${index}_RECOVERY_EMAIL`) ?? '',
-                geoLocale: envStr(`ACCOUNT_${index}_GEO_LOCALE`) ?? 'auto',
-                langCode: envStr(`ACCOUNT_${index}_LANG_CODE`) ?? 'en',
-                proxy: buildProxy(index),
-                saveFingerprint: buildSaveFingerprint(index)
-            })
-        }
-
-        if (!accounts.length) {
-            throw new Error(
-                'No accounts found in environment. Set at least one ACCOUNT_N_EMAIL (see config/env.example).'
-            )
-        }
-
-        return validateAccounts(accounts)
+        const accountsJson = envStr('ACCOUNTS_JSON')
+        if (!accountsJson) throw new Error('ACCOUNTS_JSON is required; see config/env.example.')
+        return validateAccounts(parseAccounts(accountsJson))
     } catch (error) {
         if (error instanceof Error) throw error
         throw new Error(String(error))
@@ -158,32 +108,24 @@ export function loadAccounts(): Account[] {
 
 export function loadConfig(): Config {
     try {
-        if (configCache) {
-            return configCache
-        }
+        if (configCache) return configCache
+        ensureEnvLoaded()
 
-        let configPath = resolveProjectFile('config.json')
-        if (!configPath) {
-            const examplePath = resolveProjectFile('config/config.example.json')
-            if (!examplePath)
-                throw new Error('config.json and config/config.example.json were not found in the project.')
-
-            configPath = path.join(getProjectRoot(), 'config.json')
+        const envConfig = envStr('BOT_CONFIG')
+        let overrides: unknown = {}
+        if (envConfig) {
+            let parsed: unknown
             try {
-                fs.copyFileSync(examplePath, configPath, fs.constants.COPYFILE_EXCL)
-                console.info(`[config] Created ${configPath} from config/config.example.json.`)
+                parsed = JSON.parse(envConfig)
             } catch (error) {
-                if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+                throw new Error(`BOT_CONFIG must contain valid JSON: ${error instanceof Error ? error.message : error}`)
             }
+            if (!isRecord(parsed)) throw new Error('BOT_CONFIG must be a JSON object.')
+            overrides = mergeConfig(overrides, parsed)
         }
-        const config = fs.readFileSync(configPath, 'utf-8')
 
-        const unverifiedConfig = JSON.parse(config)
-        const configData = validateConfig(unverifiedConfig)
-
-        configCache = configData
-
-        return configData
+        configCache = validateConfig(overrides)
+        return configCache
     } catch (error) {
         if (error instanceof Error) throw error
         throw new Error(String(error))

@@ -17,7 +17,7 @@
         "kill-chrome-win": "powershell -Command \"Get-Process | Where-Object { $_.MainModule.FileVersionInfo.FileDescription -eq 'Google Chrome for Testing' } | ForEach-Object { Stop-Process -Id $_.Id -Force }\"",
         "lint": "eslint .",
         "lint:fix": "eslint . --fix",
-        "test": "node --test",
+        "test": "npm run build && node --test",
         "test:log-parser": "node --test scripts/api/logParser.test.js",
         "format": "prettier --write .",
         "format:check": "prettier --check .",

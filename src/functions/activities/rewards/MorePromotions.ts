@@ -1,6 +1,6 @@
 import { BaseActivity } from '../BaseActivity'
 import type { BasePromotion, DashboardData } from '../../../interface/DashboardData'
-import { PromotionActivityRunner } from './PromotionActivityRunner'
+import { PromotionActivityRunner, toBasePromotion } from './PromotionActivityRunner'
 
 export class MorePromotions extends BaseActivity {
     public async run(data: DashboardData): Promise<void> {
@@ -14,6 +14,12 @@ export class MorePromotions extends BaseActivity {
                     .map(promotion => [promotion.offerId, promotion as BasePromotion] as const)
             ).values()
         ]
+        const existingIds = new Set(promotions.map(promotion => promotion.offerId))
+        for (const offer of this.bot.reactSnapshot?.reportable ?? []) {
+            if (offer.offerId.toLowerCase().includes('dailyset') || existingIds.has(offer.offerId)) continue
+            promotions.push(toBasePromotion(offer))
+            existingIds.add(offer.offerId)
+        }
 
         const pending = promotions.filter(promotion => this.isActionable(promotion))
         if (!pending.length) {

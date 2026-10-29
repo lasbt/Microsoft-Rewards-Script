@@ -2,18 +2,11 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 
 import { ProcessManager } from './processManager.js'
 import { buildExcludedAccountsEnv, buildSingleAccountEnv, loadAccounts, mergeAccountStats } from './accounts.js'
-import {
-    validateConfig,
-    deepMerge,
-    readConfig,
-    writeConfigAtomic,
-    diffConfig,
-    syncMissingDefaults
-} from './configEditor.js'
 import { matchesCron, readSchedule, writeSchedule } from './scheduleStore.js'
 import { deleteStoredSessions, listStoredSessions } from './sessionStore.js'
 import { resolveRunCommand } from './runCommand.js'
@@ -23,7 +16,6 @@ import {
     findUnknownOptions,
     getProjectRoot,
     loadEnvFile,
-    loadConfigSafe,
     redactSecrets,
     envStr,
     envBool
@@ -33,6 +25,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = getProjectRoot(__dirname)
 
 loadEnvFile(projectRoot)
+const require = createRequire(import.meta.url)
+let appConfig
+try {
+    appConfig = require(path.join(projectRoot, 'dist/util/Load.js')).loadConfig()
+} catch (error) {
+    log('ERROR', `Could not load built-in configuration. Run npm run build first. ${error.message}`)
+    process.exit(1)
+}
 
 const cliArgs = parseArgs(process.argv.slice(2), { boolean: ['help', 'h'] })
 
@@ -111,8 +111,6 @@ const CORS_ORIGIN = envStr('API_CORS_ORIGIN') ?? '*'
 const LOG_BUFFER = integerSetting('API_LOG_BUFFER', envStr('API_LOG_BUFFER'), 2000)
 const STOP_TIMEOUT_MS = integerSetting('API_STOP_TIMEOUT_MS', envStr('API_STOP_TIMEOUT_MS'), 15000)
 const ALLOW_ENV_OVERRIDES = envBool('API_ALLOW_ENV_OVERRIDES', false)
-const REVEAL_ENABLED = envBool('API_ALLOW_CONFIG_REVEAL', false)
-const ALLOW_CONFIG_WRITE = envBool('API_ALLOW_CONFIG_WRITE', false)
 const ALLOW_SCHEDULE_WRITE = envBool('API_ALLOW_SCHEDULE_WRITE', false)
 
 const RUN_HISTORY = integerSetting('API_RUN_HISTORY', envStr('API_RUN_HISTORY'), 20)
@@ -351,15 +349,12 @@ const requestHandler = async (req, res) => {
                     'GET /diagnostics',
                     'GET /events',
                     'GET /config',
-                    'GET /config/diff',
-                    'POST /config/sync',
                     'GET /schedule',
                     'POST /start',
                     'POST /stop',
                     'POST /restart',
                     'POST /shutdown',
                     'DELETE /sessions/:email',
-                    'PUT|PATCH /config',
                     'PUT|PATCH /schedule'
                 ]
             })
@@ -427,13 +422,7 @@ const requestHandler = async (req, res) => {
 
         // session list
         if (method === 'GET' && pathname === '/sessions') {
-            const loaded = loadConfigSafe(projectRoot)
-            if (!loaded) return sendJson(res, 404, { error: 'config.json not found' })
-            if (loaded.data == null)
-                return sendJson(res, 500, { error: 'config.json is invalid', detail: loaded.error })
-
-            const sessionPath = typeof loaded.data.sessionPath === 'string' ? loaded.data.sessionPath : 'sessions'
-            return sendJson(res, 200, listStoredSessions(projectRoot, sessionPath))
+            return sendJson(res, 200, listStoredSessions(projectRoot, appConfig.sessionPath))
         }
 
         // account-specific session delete; intentionally no delete-all route
@@ -465,13 +454,7 @@ const requestHandler = async (req, res) => {
                 })
             }
 
-            const loaded = loadConfigSafe(projectRoot)
-            if (!loaded) return sendJson(res, 404, { error: 'config.json not found' })
-            if (loaded.data == null)
-                return sendJson(res, 500, { error: 'config.json is invalid', detail: loaded.error })
-
-            const sessionPath = typeof loaded.data.sessionPath === 'string' ? loaded.data.sessionPath : 'sessions'
-            const result = deleteStoredSessions(projectRoot, sessionPath, email)
+            const result = deleteStoredSessions(projectRoot, appConfig.sessionPath, email)
             if (!result.found) {
                 return sendJson(res, 404, {
                     error: `No stored sessions found for ${email}.`,
@@ -495,46 +478,7 @@ const requestHandler = async (req, res) => {
 
         // conf read
         if (method === 'GET' && pathname === '/config') {
-            const loaded = loadConfigSafe(projectRoot)
-            if (!loaded) return sendJson(res, 404, { error: 'config.json not found' })
-            if (loaded.data == null)
-                return sendJson(res, 500, { error: 'config.json is invalid', detail: loaded.error })
-            const reveal = REVEAL_ENABLED && Boolean(TOKEN) && url.searchParams.get('reveal') === '1'
-            const data = reveal ? loaded.data : redactSecrets(loaded.data)
-            return sendJson(res, 200, { path: loaded.path, redacted: !reveal, config: data })
-        }
-
-        if (method === 'GET' && pathname === '/config/diff') {
-            try {
-                const { addedKeys } = await diffConfig(projectRoot, {
-                    validatorModule: envStr('API_VALIDATOR_MODULE')
-                })
-                return sendJson(res, 200, { addedKeys, upToDate: addedKeys.length === 0 })
-            } catch (err) {
-                return sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) })
-            }
-        }
-
-        if (method === 'POST' && pathname === '/config/sync') {
-            if (!ALLOW_CONFIG_WRITE) {
-                return sendJson(res, 403, {
-                    error: 'Config writes are disabled. Set API_ALLOW_CONFIG_WRITE=true to enable.'
-                })
-            }
-            try {
-                const result = await syncMissingDefaults(projectRoot, {
-                    validatorModule: envStr('API_VALIDATOR_MODULE')
-                })
-                if (result.patched) {
-                    pm.note(
-                        'info',
-                        `config.json patched with ${result.addedKeys.length} missing key(s) via API /config/sync.`
-                    )
-                }
-                return sendJson(res, 200, { ...result, appliesOnNextRun: true })
-            } catch (err) {
-                return sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) })
-            }
+            return sendJson(res, 200, { source: envStr('BOT_CONFIG') ? 'BOT_CONFIG' : 'defaults', config: redactSecrets(appConfig) })
         }
 
         // sched read
@@ -665,43 +609,6 @@ const requestHandler = async (req, res) => {
             } catch (err) {
                 if (err.code === 'BAD_REQUEST') return sendJson(res, 400, { error: err.message, code: err.code })
                 return sendJson(res, 500, { error: err.message })
-            }
-        }
-
-        // conf
-        if ((method === 'PUT' || method === 'PATCH') && pathname === '/config') {
-            if (!ALLOW_CONFIG_WRITE) {
-                return sendJson(res, 403, {
-                    error: 'Config writes are disabled. Set API_ALLOW_CONFIG_WRITE=true to enable.'
-                })
-            }
-            const body = await readJsonBody(req)
-            if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-                return sendJson(res, 400, { error: 'Body must be a JSON object.' })
-            }
-            let candidate
-            try {
-                candidate = method === 'PATCH' ? deepMerge(readConfig(projectRoot).data, body) : body
-            } catch (err) {
-                return sendJson(res, err.code === 'BAD_REQUEST' ? 400 : 500, {
-                    error: `Could not prepare config update: ${err instanceof Error ? err.message : err}`
-                })
-            }
-            const result = await validateConfig(candidate, {
-                projectRoot,
-                validatorModule: envStr('API_VALIDATOR_MODULE')
-            })
-            if (!result.ok) {
-                return sendJson(res, 422, { error: 'Config validation failed', via: result.via, errors: result.errors })
-            }
-            try {
-                const written = writeConfigAtomic(projectRoot, result.value ?? candidate)
-                pm.note('info', `config.json updated via API (${method}); applies on the next run.`)
-                return sendJson(res, 200, { ok: true, path: written, via: result.via, appliesOnNextRun: true })
-            } catch (err) {
-                return sendJson(res, 500, {
-                    error: `Could not write config: ${err instanceof Error ? err.message : err}`
-                })
             }
         }
 
@@ -860,7 +767,7 @@ server.listen(PORT, HOST, () => {
     )
     log(
         'INFO',
-        `Runtime state: memory-only | config writes: ${ALLOW_CONFIG_WRITE ? 'on' : 'off'} | schedule writes: ${ALLOW_SCHEDULE_WRITE ? 'on' : 'off'} | session deletion: account-scoped`
+        `Runtime state: memory-only | config source: ${envStr('BOT_CONFIG') ? 'BOT_CONFIG' : 'defaults'} | schedule writes: ${ALLOW_SCHEDULE_WRITE ? 'on' : 'off'} | session deletion: account-scoped`
     )
     if (!TOKEN) {
         const loopback = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1'

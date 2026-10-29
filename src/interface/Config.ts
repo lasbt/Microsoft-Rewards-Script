@@ -5,7 +5,7 @@ export interface Config {
     errorDiagnostics: boolean
     ensureStreakProtection: boolean
     autoClaimPunchcardRewards: boolean
-    contintueOnBotWarning: boolean
+    continueOnBotWarning: boolean
     skipNonPointTasks: boolean
     accountDelay: ConfigDelay
     workers: ConfigWorkers
@@ -25,9 +25,6 @@ export type RssFeedSelector = 'rss' | `rss.${string}`
 export type QueryEngineEntry = QueryEngine | RssFeedSelector
 
 export interface ConfigSearchSettings {
-    scrollRandomResults: boolean
-    clickRandomResults: boolean
-    runOnZeroPoints: boolean
     maxBonusSearches: number
     parallelSearching: boolean
     clusterSearch: boolean
@@ -76,8 +73,6 @@ export interface ConfigActivities {
 
 export interface ConfigWebhook {
     discord?: WebhookDiscordConfig
-    ntfy?: WebhookNtfyConfig
-    telegram?: WebhookTelegramConfig
     webhookLogFilter: LogFilter
 }
 
@@ -94,18 +89,3 @@ export interface WebhookDiscordConfig {
     url: string
 }
 
-export interface WebhookNtfyConfig {
-    enabled?: boolean
-    url: string
-    topic?: string
-    token?: string
-    title?: string
-    tags?: string[]
-    priority?: 1 | 2 | 3 | 4 | 5 // 5 highest (important)
-}
-
-export interface WebhookTelegramConfig {
-    enabled?: boolean
-    botToken: string
-    chatId: string | number
-}

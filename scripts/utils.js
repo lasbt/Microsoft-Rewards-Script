@@ -2,7 +2,10 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { DatabaseSync } from 'node:sqlite'
-import { accountIndexesFromEnv, envBool, envInt, envStr, normalizeGeoLocale, normalizeLanguageCode } from './env.js'
+import { createRequire } from 'node:module'
+import { parseAccountsJson } from './env.js'
+
+const require = createRequire(import.meta.url)
 
 export function getDirname(importMetaUrl) {
     const __filename = fileURLToPath(importMetaUrl)
@@ -109,51 +112,11 @@ export function resolveEmailArgument(args) {
     return email
 }
 
-export function loadJsonFile(possiblePaths, required = true) {
-    for (const filePath of possiblePaths) {
-        if (fs.existsSync(filePath)) {
-            try {
-                const content = fs.readFileSync(filePath, 'utf8')
-                return { data: JSON.parse(content), path: filePath }
-            } catch (error) {
-                log('ERROR', `Failed to parse JSON file: ${filePath}`)
-                log('ERROR', `Parse error: ${error.message}`)
-                if (required) process.exit(1)
-                return null
-            }
-        }
-    }
-
-    if (required) {
-        log('ERROR', 'Required file not found. Searched in:')
-        possiblePaths.forEach(p => log('ERROR', `  - ${p}`))
-        process.exit(1)
-    }
-
-    return null
-}
-
 export function loadConfig(projectRoot) {
-    const possiblePaths = [
-        path.resolve(process.cwd(), 'config.json'),
-        path.join(projectRoot, 'config.json'),
-        path.join(projectRoot, 'dist', 'config.json'),
-        path.join(projectRoot, 'src', 'config.json')
-    ]
-
-    const result = loadJsonFile(possiblePaths, true)
-
-    const missingFields = []
-    if (!result.data.sessionPath) missingFields.push('sessionPath')
-
-    if (missingFields.length > 0) {
-        log('ERROR', 'Invalid config.json - missing required fields:')
-        missingFields.forEach(field => log('ERROR', `  - ${field}`))
-        log('ERROR', `Config file: ${result.path}`)
-        process.exit(1)
-    }
-
-    return result
+    const modulePath = path.join(projectRoot, 'dist', 'util', 'Load.js')
+    if (!fs.existsSync(modulePath)) throw new Error('Run npm run build before using session tools.')
+    const data = require(modulePath).loadConfig()
+    return { data, path: process.env.BOT_CONFIG ? 'BOT_CONFIG' : 'built-in defaults' }
 }
 
 export function loadEnvFile(projectRoot) {
@@ -188,50 +151,21 @@ export function loadEnvFile(projectRoot) {
     }
 }
 
-const deprecationWarned = new Set()
-function envBoolWithLegacy(primary, legacy, fallback) {
-    if (envStr(primary) !== undefined) return envBool(primary, fallback)
-    if (envStr(legacy) !== undefined) {
-        if (!deprecationWarned.has(legacy)) {
-            deprecationWarned.add(legacy)
-            log('WARN', `${legacy} is deprecated; rename it to ${primary}.`)
-        }
-        return envBool(legacy, fallback)
-    }
-    return fallback
-}
-
 export function loadAccountsFromEnv(projectRoot) {
     loadEnvFile(projectRoot)
-
-    const accounts = []
-    for (const index of accountIndexesFromEnv()) {
-        const idx = String(index)
-        const email = envStr(`ACCOUNT_${idx}_EMAIL`)
-        if (!email) continue
-
-        accounts.push({
-            email,
-            password: envStr(`ACCOUNT_${idx}_PASSWORD`) ?? '',
-            totpSecret: envStr(`ACCOUNT_${idx}_TOTP_SECRET`),
-            recoveryEmail: envStr(`ACCOUNT_${idx}_RECOVERY_EMAIL`) ?? '',
-            geoLocale: normalizeGeoLocale(envStr(`ACCOUNT_${idx}_GEO_LOCALE`) ?? 'auto'),
-            langCode: normalizeLanguageCode(envStr(`ACCOUNT_${idx}_LANG_CODE`) ?? 'en'),
-            proxy: {
-                proxyHttp: envBoolWithLegacy(`ACCOUNT_${idx}_PROXY_HTTP`, `ACCOUNT_${idx}_PROXY_AXIOS`, false),
-                url: envStr(`ACCOUNT_${idx}_PROXY_URL`) ?? '',
-                port: envInt(`ACCOUNT_${idx}_PROXY_PORT`, 0),
-                username: envStr(`ACCOUNT_${idx}_PROXY_USERNAME`) ?? '',
-                password: envStr(`ACCOUNT_${idx}_PROXY_PASSWORD`) ?? ''
-            },
-            saveFingerprint: {
-                mobile: envBool(`ACCOUNT_${idx}_SAVE_FINGERPRINT_MOBILE`, false),
-                desktop: envBool(`ACCOUNT_${idx}_SAVE_FINGERPRINT_DESKTOP`, false)
-            }
-        })
-    }
-
-    return accounts
+    return parseAccountsJson().map(account => ({
+        ...account,
+        password: account.password ?? '',
+        recoveryEmail: account.recoveryEmail ?? '',
+        region: account.region?.trim().toUpperCase(),
+        proxy: {
+            proxyHttp: account.proxy?.proxyHttp ?? false,
+            url: account.proxy?.url ?? '',
+            port: account.proxy?.port ?? 0,
+            username: account.proxy?.username ?? '',
+            password: account.proxy?.password ?? ''
+        }
+    }))
 }
 
 export function findAccountByEmail(accounts, email) {
@@ -344,7 +278,6 @@ export function ensureSessionSchema(db) {
             email         TEXT NOT NULL,
             platform      TEXT NOT NULL,
             storage_state TEXT,
-            fingerprint   TEXT,
             updated_at    INTEGER NOT NULL,
             PRIMARY KEY (email, platform)
         )
@@ -366,14 +299,13 @@ export function closeSessionDb(db) {
 
 export function loadSessionRow(db, email, platform) {
     const row = db
-        .prepare('SELECT storage_state, fingerprint, updated_at FROM sessions WHERE email = ? AND platform = ?')
+        .prepare('SELECT storage_state, updated_at FROM sessions WHERE email = ? AND platform = ?')
         .get(email, platform)
 
     if (!row) return null
 
     return {
         storageState: row.storage_state ? JSON.parse(row.storage_state) : null,
-        fingerprint: row.fingerprint ? JSON.parse(row.fingerprint) : null,
         updatedAt: row.updated_at
     }
 }
@@ -387,7 +319,7 @@ export function loadResolvedRegionRow(db, email) {
     }
 }
 
-export function saveSessionRow(db, email, platform, storageState, fingerprint, persistFingerprint = true) {
+export function saveSessionRow(db, email, platform, storageState) {
     if (platform !== 'mobile' && platform !== 'desktop') {
         throw new Error(`Unsupported session platform: ${platform}`)
     }
@@ -401,25 +333,6 @@ export function saveSessionRow(db, email, platform, storageState, fingerprint, p
         cookies: storageState.cookies.filter(
             cookie => cookie.expires === -1 || !Number.isFinite(cookie.expires) || cookie.expires > nowSeconds
         )
-    }
-
-    if (persistFingerprint) {
-        db.prepare(
-            `INSERT INTO sessions (email, platform, storage_state, fingerprint, updated_at)
-             VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(email, platform)
-             DO UPDATE SET
-                 storage_state = excluded.storage_state,
-                 fingerprint = excluded.fingerprint,
-                 updated_at = excluded.updated_at`
-        ).run(
-            email,
-            platform,
-            JSON.stringify(sanitizedState),
-            fingerprint ? JSON.stringify(fingerprint) : null,
-            Date.now()
-        )
-        return
     }
 
     db.prepare(

@@ -24,24 +24,22 @@ export function envInt(key, fallback, sourceEnv = process.env) {
     return Number.isFinite(parsed) ? parsed : fallback
 }
 
-export function accountIndexesFromEnv(sourceEnv = process.env) {
-    return Object.keys(sourceEnv)
-        .map(key => /^ACCOUNT_([1-9]\d*)_EMAIL$/.exec(key)?.[1])
-        .filter(index => index && envStrFrom(sourceEnv, `ACCOUNT_${index}_EMAIL`))
-        .map(Number)
-        .sort((a, b) => a - b)
-}
+export function parseAccountsJson(sourceEnv = process.env) {
+    const raw = envStrFrom(sourceEnv, 'ACCOUNTS_JSON')
+    if (!raw) return []
 
-export function normalizeLanguageCode(value = 'en') {
-    const trimmed = String(value).trim()
+    let accounts
     try {
-        return new Intl.Locale(trimmed).toString()
-    } catch {
-        return trimmed
+        accounts = JSON.parse(raw)
+    } catch (error) {
+        throw new Error(`ACCOUNTS_JSON must contain valid JSON: ${error.message}`)
     }
-}
 
-export function normalizeGeoLocale(value = 'auto') {
-    const trimmed = String(value).trim()
-    return trimmed.toLowerCase() === 'auto' ? 'auto' : trimmed.toUpperCase()
+    if (!Array.isArray(accounts)) throw new Error('ACCOUNTS_JSON must be a JSON array.')
+    for (const [index, account] of accounts.entries()) {
+        if (!account || typeof account !== 'object' || Array.isArray(account) || typeof account.email !== 'string') {
+            throw new Error(`ACCOUNTS_JSON[${index}].email must be a string.`)
+        }
+    }
+    return accounts
 }

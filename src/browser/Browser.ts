@@ -3,8 +3,7 @@ import { newInjectedContext } from 'fingerprint-injector'
 import { BrowserFingerprintWithHeaders, FingerprintGenerator } from 'fingerprint-generator'
 
 import type { MicrosoftRewardsBot } from '../index'
-import { loadSession, saveFingerprint } from '../util/SessionStore'
-import { fingerprintMatchesLocale } from '../util/Locale'
+import { loadSession } from '../util/SessionStore'
 import { formatBrowserProxyServer } from '../util/Proxy'
 import { UserAgentManager } from './UserAgent'
 
@@ -120,24 +119,7 @@ class Browser {
                 )
             }
 
-            const shouldUseFingerprint = this.bot.isMobile
-                ? account.saveFingerprint.mobile
-                : account.saveFingerprint.desktop
-
-            const savedFingerprint = shouldUseFingerprint ? session?.fingerprint : null
-            const reuseFingerprint =
-                savedFingerprint && fingerprintMatchesLocale(savedFingerprint, this.bot.accountLocale)
-
-            if (savedFingerprint && !reuseFingerprint) {
-                this.bot.logger.info(
-                    this.bot.isMobile,
-                    'BROWSER-FINGERPRINT',
-                    `Saved fingerprint locale does not match ${this.bot.accountLocale.locale}; generating a replacement`
-                )
-            }
-
-            const fingerprint =
-                (reuseFingerprint && savedFingerprint) || (await this.generateFingerprint(this.bot.isMobile))
+            const fingerprint = await this.generateFingerprint(this.bot.isMobile)
 
             const screen = fingerprint.fingerprint.screen
 
@@ -181,10 +163,6 @@ class Browser {
             context.on('close', () => this.bot.logger.warn(this.bot.isMobile, 'BROWSER', 'Browser context closed'))
 
             context.setDefaultTimeout(this.bot.utils.stringToNumber(this.bot.config?.globalTimeout ?? 30000))
-
-            if (shouldUseFingerprint && !reuseFingerprint) {
-                saveFingerprint(this.bot.config.sessionPath, account.email, this.bot.isMobile, fingerprint)
-            }
 
             this.bot.logger.info(
                 this.bot.isMobile,

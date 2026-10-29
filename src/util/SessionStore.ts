@@ -3,20 +3,17 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import type { BrowserContext } from 'patchright'
-import type { BrowserFingerprintWithHeaders } from 'fingerprint-generator'
 
 export type StorageState = Awaited<ReturnType<BrowserContext['storageState']>>
 
 export interface LoadedSession {
     storageState: StorageState | null
-    fingerprint: BrowserFingerprintWithHeaders | null
     updatedAt: number
     expiredCookiesRemoved: number
 }
 
 interface SessionRow {
     storage_state: string | null
-    fingerprint: string | null
     updated_at: number
 }
 
@@ -65,7 +62,6 @@ function getDb(sessionPath: string): DatabaseSync {
             email         TEXT NOT NULL,
             platform      TEXT NOT NULL,
             storage_state TEXT,
-            fingerprint   TEXT,
             updated_at    INTEGER NOT NULL,
             PRIMARY KEY (email, platform)
         )
@@ -89,7 +85,7 @@ export function loadSession(
 ): LoadedSession | null {
     const database = getDb(sessionPath)
     const row = database
-        .prepare('SELECT storage_state, fingerprint, updated_at FROM sessions WHERE email = ? AND platform = ?')
+        .prepare('SELECT storage_state, updated_at FROM sessions WHERE email = ? AND platform = ?')
         .get(email, platformOf(isMobile)) as SessionRow | undefined
 
     if (!row) return null
@@ -109,7 +105,6 @@ export function loadSession(
 
     return {
         storageState: sanitized.storageState,
-        fingerprint: row.fingerprint ? (JSON.parse(row.fingerprint) as BrowserFingerprintWithHeaders) : null,
         updatedAt: row.updated_at,
         expiredCookiesRemoved: sanitized.expiredCookiesRemoved
     }
@@ -141,22 +136,6 @@ export function clearStorageState(sessionPath: string, email: string, isMobile: 
              WHERE email = ? AND platform = ?`
         )
         .run(Date.now(), email, platformOf(isMobile))
-}
-
-export function saveFingerprint(
-    sessionPath: string,
-    email: string,
-    isMobile: boolean,
-    fingerprint: BrowserFingerprintWithHeaders
-): void {
-    getDb(sessionPath)
-        .prepare(
-            `INSERT INTO sessions (email, platform, fingerprint, updated_at)
-             VALUES (?, ?, ?, ?)
-             ON CONFLICT(email, platform)
-             DO UPDATE SET fingerprint = excluded.fingerprint, updated_at = excluded.updated_at`
-        )
-        .run(email, platformOf(isMobile), JSON.stringify(fingerprint), Date.now())
 }
 
 export function loadResolvedRegion(sessionPath: string, email: string): string | undefined {

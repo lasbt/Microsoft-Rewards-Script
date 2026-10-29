@@ -1,12 +1,18 @@
 import { BaseActivity } from '../BaseActivity'
-import type { DashboardData } from '../../../interface/DashboardData'
-import { PromotionActivityRunner } from './PromotionActivityRunner'
+import type { BasePromotion, DashboardData } from '../../../interface/DashboardData'
+import { PromotionActivityRunner, toBasePromotion } from './PromotionActivityRunner'
 
 export class DailySet extends BaseActivity {
     public async run(data: DashboardData): Promise<void> {
         const today = this.bot.utils.getFormattedDate()
-        const pending =
+        let pending: BasePromotion[] =
             data.dashboard.dailySetPromotions[today]?.filter(item => !item.complete && item.pointProgressMax > 0) ?? []
+
+        if (!pending.length) {
+            pending = (this.bot.reactSnapshot?.offers ?? [])
+                .filter(offer => offer.offerId.toLowerCase().includes('dailyset') && offer.reportable && offer.points > 0)
+                .map(toBasePromotion)
+        }
 
         if (!pending.length) {
             this.bot.logger.info(this.bot.isMobile, 'DAILY-SET', 'All "Daily Set" items have already been completed')

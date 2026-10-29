@@ -262,15 +262,79 @@ export default class ReactFunc {
         return out
     }
 
+    private textContent(node: unknown): string {
+        if (typeof node === 'string') return node
+        if (Array.isArray(node)) return node.map(child => this.textContent(child)).join('')
+        if (!node || typeof node !== 'object') return ''
+        return this.textContent((node as Record<string, unknown>).children)
+    }
+
+    private findTextByClass(node: unknown, targetClass: string): string {
+        if (!node || typeof node !== 'object') return ''
+        if (Array.isArray(node)) {
+            for (const child of node) {
+                const text = this.findTextByClass(child, targetClass)
+                if (text) return text
+            }
+            return ''
+        }
+
+        const record = node as Record<string, unknown>
+        if (typeof record.className === 'string' && record.className.includes(targetClass)) {
+            return this.textContent(record.children)
+        }
+        for (const value of Object.values(record)) {
+            const text = this.findTextByClass(value, targetClass)
+            if (text) return text
+        }
+        return ''
+    }
+
+    private getReferencedOfferObjects(
+        value: unknown,
+        chunks: Map<string, string>
+    ): Record<string, unknown>[] {
+        const pending: unknown[] = [value]
+        const seen = new Set<string>()
+        const objects: Record<string, unknown>[] = []
+
+        while (pending.length) {
+            const current = pending.pop()
+            if (typeof current === 'string') {
+                for (const match of current.matchAll(/\$L([0-9a-f]+)/gi)) {
+                    const id = match[1]!.toLowerCase()
+                    const chunk = chunks.get(id)
+                    if (!chunk || seen.has(id)) continue
+                    seen.add(id)
+                    objects.push(...this.extractObjects(chunk, '"className"'))
+                    pending.push(chunk)
+                }
+            } else if (Array.isArray(current)) {
+                pending.push(...current)
+            } else if (current && typeof current === 'object') {
+                pending.push(...Object.values(current))
+            }
+        }
+
+        return objects
+    }
+
     // Section parsers
     private parseOffers(combined: string): ParsedOffer[] {
         try {
             const today = this.todayStamp()
             const offers = new Map<string, ParsedOffer>()
+            const flightChunks = this.buildFlightChunkMap(combined)
 
             for (const obj of this.extractObjects(combined, '"offerId"')) {
                 const offerId = obj.offerId as string | undefined
                 if (!offerId) continue
+
+                const referencedObjects = this.getReferencedOfferObjects(obj, flightChunks)
+                const findText = (className: string): string =>
+                    this.findTextByClass(obj, className) ||
+                    referencedObjects.map(reference => this.findTextByClass(reference, className)).find(Boolean) ||
+                    ''
 
                 const hash = (obj.hash as string | null) ?? null
                 const isCompleted = ((obj.isCompleted ?? obj.complete) as boolean | undefined) === true
@@ -290,13 +354,25 @@ export default class ReactFunc {
 
                 // Never try future-dated offers, lol
                 const reportable = !!hash && !isCompleted && !isLocked && (date === null || date <= today)
+                const isExploreOnBing = offerId.toLowerCase().includes('exploreonbing')
+                let title = (obj.title as string) ?? findText('text-globalBody2Strong')
+                let description = (obj.description as string) ?? findText('text-fgCtrlNeutralSecondaryRest')
+                let points = (obj.points as number) ?? (obj.pointProgressMax as number) ?? 0
+
+                if (!points) {
+                    const badgeText = findText('text-statusInformativeTintFg')
+                    points = Number(badgeText.match(/\d+/)?.[0] ?? (isExploreOnBing ? 10 : 0))
+                }
+
+                title = title.replace(/[\u200B-\u200D\uFEFF]/g, '').trim()
+                description = description.replace(/[\u200B-\u200D\uFEFF]/g, '').trim()
 
                 const candidate: ParsedOffer = {
                     offerId,
                     hash,
-                    title: (obj.title as string) ?? '',
-                    description: (obj.description as string) ?? '',
-                    points: (obj.points as number) ?? (obj.pointProgressMax as number) ?? 0,
+                    title: title || offerId,
+                    description,
+                    points,
                     promotionSubtype: (obj.promotionSubtype as string | null) ?? null,
                     destination: (obj.destination as string) ?? (obj.destinationUrl as string) ?? '',
                     isCompleted,
@@ -702,16 +778,24 @@ export default class ReactFunc {
     public snapshotQuestList(...htmls: string[]): ParentQuest[] {
         try {
             const combined = htmls.map(h => this.concatFlightChunks(h)).join('')
+            const chunkMap = this.buildFlightChunkMap(combined)
 
             const anchors: { id: string; at: number }[] = []
+            const explicitRanges: { start: number; end: number }[] = []
             for (const match of combined.matchAll(/\/earn\/quest\/([A-Za-z0-9_]+)/g)) {
-                anchors.push({ id: match[1] as string, at: match.index ?? 0 })
+                const at = match.index ?? 0
+                anchors.push({ id: match[1] as string, at })
+                explicitRanges.push({ start: at, end: at + match[0].length })
             }
             for (const match of combined.matchAll(/"id":"quest_([A-Za-z0-9_]+)"/g)) {
-                anchors.push({ id: match[1] as string, at: match.index ?? 0 })
+                const at = match.index ?? 0
+                anchors.push({ id: match[1] as string, at })
+                explicitRanges.push({ start: at, end: at + match[0].length })
             }
             for (const match of combined.matchAll(/[A-Za-z0-9_]*pcparent[A-Za-z0-9_]*/gi)) {
-                anchors.push({ id: match[0] as string, at: match.index ?? 0 })
+                const at = match.index ?? 0
+                if (explicitRanges.some(range => at >= range.start && at < range.end)) continue
+                anchors.push({ id: match[0] as string, at })
             }
             anchors.sort((a, b) => a.at - b.at)
 
@@ -720,26 +804,32 @@ export default class ReactFunc {
                 const { id, at } = anchors[k]!
                 if (!this.isParentQuestId(id)) continue
 
-                const next = anchors[k + 1]?.at ?? combined.length
-                const region = combined.slice(at, Math.min(next, at + 3000))
+                let next = combined.length
+                for (let j = k + 1; j < anchors.length; j++) {
+                    if (anchors[j]!.id !== id && this.isParentQuestId(anchors[j]!.id)) {
+                        next = anchors[j]!.at
+                        break
+                    }
+                }
+                const card = combined.slice(at, Math.min(next, at + 4000))
+                const region = `${card}\n${this.expandFlightReferences(card, chunkMap)}`
 
                 const title =
                     region.match(/"alt":"((?:[^"\\]|\\.)*)"/)?.[1] ??
                     region.match(/"title":"((?:[^"\\]|\\.)*)"/)?.[1] ??
                     ''
 
-                const pointsMatch = region.match(/\["\+","([\d,]+)"\]/)
+                const pointsMatch = region.match(/\["(?:\+)?","([\d,]+)"\]/)
                 const points = pointsMatch ? Number(pointsMatch[1]!.replace(/,/g, '')) : 0
-                const taskM = region.match(/(\d+)\s*\/\s*(\d+)\s*tasks/)
+                const taskM = region.match(/(\d+)\s*(?:\/|von|of|de|sur)\s*(\d+)/i)
                 const complete = !!taskM && Number(taskM[1]) >= Number(taskM[2]!) && Number(taskM[2]) > 0
 
-                // First wins for title/points
                 const prev = byId.get(id)
                 byId.set(id, {
                     offerId: id,
                     title: prev?.title || title,
-                    pointProgressMax: prev?.pointProgressMax || points,
-                    complete: prev?.complete || complete
+                    pointProgressMax: Math.max(prev?.pointProgressMax ?? 0, points),
+                    complete: Boolean(prev?.complete || complete)
                 })
             }
 
@@ -777,6 +867,43 @@ export default class ReactFunc {
         const id = offerId.toLowerCase()
         if (id.includes('pcchild')) return false
         return id.includes('pcparent') || id.includes('punchcard')
+    }
+
+    private buildFlightChunkMap(combined: string): Map<string, string> {
+        const chunks = new Map<string, string>()
+        const markers = [...combined.matchAll(/(?:^|\n)([0-9a-f]+):/gi)].map(match => ({
+            id: match[1]!.toLowerCase(),
+            start: (match.index ?? 0) + match[0].length,
+            marker: match.index ?? 0
+        }))
+
+        for (let index = 0; index < markers.length; index++) {
+            const marker = markers[index]!
+            const end = markers[index + 1]?.marker ?? combined.length
+            chunks.set(marker.id, combined.slice(marker.start, end))
+        }
+
+        return chunks
+    }
+
+    private expandFlightReferences(value: string, chunks: Map<string, string>): string {
+        const pending = [value]
+        const seen = new Set<string>()
+        const resolved: string[] = []
+
+        while (pending.length) {
+            const current = pending.pop()!
+            for (const match of current.matchAll(/\$L([0-9a-f]+)/gi)) {
+                const id = match[1]!.toLowerCase()
+                const chunk = chunks.get(id)
+                if (!chunk || seen.has(id)) continue
+                seen.add(id)
+                resolved.push(chunk)
+                pending.push(chunk)
+            }
+        }
+
+        return resolved.join('\n')
     }
 
     // Utils

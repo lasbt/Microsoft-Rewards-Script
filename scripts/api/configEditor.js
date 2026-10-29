@@ -122,9 +122,6 @@ function structuralValidate(cfg) {
         } else {
             const search = cfg.searchSettings
             for (const key of [
-                'scrollRandomResults',
-                'clickRandomResults',
-                'runOnZeroPoints',
                 'parallelSearching',
                 'clusterSearch'
             ]) {

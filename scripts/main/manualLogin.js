@@ -119,33 +119,15 @@ function normalizeCountry(value) {
 }
 
 function resolveLocale(account, resolvedCountry) {
-    const languageTag = new Intl.Locale(account.langCode || 'en').toString()
-    const parsed = new Intl.Locale(languageTag)
-    const language = parsed.language.toLowerCase()
-    const configuredCountry =
-        account.geoLocale.toLowerCase() === 'auto' ? undefined : normalizeCountry(account.geoLocale)
-    const country = configuredCountry ?? normalizeCountry(resolvedCountry) ?? normalizeCountry(parsed.region)
-    const locale = country ? new Intl.Locale(languageTag, { region: country }).toString() : parsed.toString()
-    const acceptedLocales = locale.toLowerCase() === language ? [language] : [locale, language]
+    const country = normalizeCountry(account.region) ?? normalizeCountry(resolvedCountry)
+    const locale = country
+        ? new Intl.Locale('und', { region: country }).maximize()
+        : new Intl.Locale(Intl.DateTimeFormat().resolvedOptions().locale)
+    const language = locale.language.toLowerCase()
+    const localeTag = locale.toString()
+    const acceptedLocales = localeTag.toLowerCase() === language ? [language] : [localeTag, language]
 
-    return { locale, acceptedLocales }
-}
-
-function fingerprintMatchesLocale(fingerprint, locale) {
-    try {
-        const navigatorLocale = new Intl.Locale(fingerprint.fingerprint.navigator.language).toString()
-        const acceptLanguage = Object.entries(fingerprint.headers).find(
-            ([name]) => name.toLowerCase() === 'accept-language'
-        )?.[1]
-        const headerLocale = acceptLanguage?.split(',')[0]?.trim()
-
-        return (
-            navigatorLocale.toLowerCase() === locale.locale.toLowerCase() &&
-            new Intl.Locale(headerLocale).toString().toLowerCase() === locale.locale.toLowerCase()
-        )
-    } catch {
-        return false
-    }
+    return { locale: localeTag, acceptedLocales }
 }
 
 function createFingerprint(isMobile, locale) {
@@ -159,7 +141,7 @@ function createFingerprint(isMobile, locale) {
 }
 
 function loadStoredSession(dbPath, email, platform, fresh) {
-    if (!fs.existsSync(dbPath)) return { storageState: null, fingerprint: null, resolvedCountry: undefined }
+    if (!fs.existsSync(dbPath)) return { storageState: null, resolvedCountry: undefined }
 
     const db = openSessionDb(dbPath, { readonly: true })
     try {
@@ -171,7 +153,6 @@ function loadStoredSession(dbPath, email, platform, fresh) {
         }
         return {
             storageState: fresh ? null : (session?.storageState ?? null),
-            fingerprint: session?.fingerprint ?? null,
             resolvedCountry: loadResolvedRegionRow(db, email)
         }
     } finally {
@@ -212,7 +193,7 @@ async function waitForStableRewardsPage(page, browser) {
     throw new Error('Browser was closed before login completed')
 }
 
-function saveManualSession(dbPath, email, platform, storageState, fingerprint, persistFingerprint) {
+function saveManualSession(dbPath, email, platform, storageState) {
     const sessionDir = path.dirname(dbPath)
     fs.mkdirSync(sessionDir, { recursive: true, mode: 0o700 })
     try {
@@ -222,7 +203,7 @@ function saveManualSession(dbPath, email, platform, storageState, fingerprint, p
     const db = openSessionDb(dbPath)
     try {
         ensureSessionSchema(db)
-        saveSessionRow(db, email, platform, storageState, fingerprint, persistFingerprint)
+        saveSessionRow(db, email, platform, storageState)
         db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
     } finally {
         closeSessionDb(db)
@@ -237,22 +218,12 @@ async function runPlatform({ account, config, dbPath, platform, fresh }) {
     const isMobile = platform === 'mobile'
     const stored = loadStoredSession(dbPath, account.email, platform, fresh)
     const locale = resolveLocale(account, stored.resolvedCountry)
-    const savesFingerprint = isMobile ? account.saveFingerprint.mobile : account.saveFingerprint.desktop
-    const canReuseFingerprint =
-        savesFingerprint && stored.fingerprint && fingerprintMatchesLocale(stored.fingerprint, locale)
-    const fingerprint = canReuseFingerprint ? stored.fingerprint : createFingerprint(isMobile, locale)
+    const fingerprint = createFingerprint(isMobile, locale)
     const screen = fingerprint.fingerprint.screen
     const proxy = buildProxyConfig(account)
 
     if (account.proxy.url && !proxy) {
         throw new Error('Account proxy is configured but invalid (needs proxy URL and port)')
-    }
-
-    if (!savesFingerprint) {
-        log(
-            'WARN',
-            `ACCOUNT_N_SAVE_FINGERPRINT_${platform.toUpperCase()} is disabled. Enable it so automated runs reuse this manual-login fingerprint.`
-        )
     }
 
     log('INFO', `Opening ${platform} manual login for ${account.email}`)
@@ -331,7 +302,7 @@ async function runPlatform({ account, config, dbPath, platform, fresh }) {
             throw new Error('Rewards page was detected, but the browser had no cookies to save')
         }
 
-        saveManualSession(dbPath, account.email, platform, storageState, fingerprint, savesFingerprint)
+        saveManualSession(dbPath, account.email, platform, storageState)
         log(
             'SUCCESS',
             `Saved ${platform} session for ${account.email} | cookies=${storageState.cookies.length} | origins=${storageState.origins.length}`
@@ -380,7 +351,7 @@ async function main() {
 
     const { dbPath } = getSessionDbPath(projectRoot, config.sessionPath)
 
-    log('INFO', 'Configuration loaded from config.json')
+    log('INFO', 'Configuration loaded from built-in defaults and BOT_CONFIG')
     if (config.headless) {
         log('INFO', 'config.headless=true is overridden because manual login requires a visible browser')
     }

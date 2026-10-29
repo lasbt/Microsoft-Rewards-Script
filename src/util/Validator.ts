@@ -6,7 +6,7 @@ import defaultConfigJson from '../../config/config.example.json'
 
 import { Config } from '../interface/Config'
 import { Account } from '../interface/Account'
-import { normalizeCountry, normalizeLanguageTag } from './Locale'
+import { normalizeCountry } from './Locale'
 import { parseBrowserProxyUrl } from './Proxy'
 
 const NumberOrString = z.union([z.number(), z.string()])
@@ -51,20 +51,6 @@ const QueryEngineSchema = z.union([
         .regex(/^rss(\.[A-Za-z0-9_-]+){0,2}$/, 'Invalid rss selector (use rss, rss.<site>, or rss.<site>.<endpoint>)')
 ])
 
-const AccountLanguageSchema = z
-    .string()
-    .trim()
-    .min(1)
-    .refine(value => {
-        try {
-            normalizeLanguageTag(value)
-            return true
-        } catch {
-            return false
-        }
-    }, 'Expected a valid BCP 47 language tag')
-    .transform(normalizeLanguageTag)
-
 const AccountCountrySchema = z
     .string()
     .trim()
@@ -75,30 +61,7 @@ const AccountCountrySchema = z
     )
 
 const WebhookSchema = z.object({
-    discord: z
-        .object({
-            enabled: z.boolean(),
-            url: z.string()
-        })
-        .optional(),
-    ntfy: z
-        .object({
-            enabled: z.boolean().optional(),
-            url: z.string(),
-            topic: z.string().optional(),
-            token: z.string().optional(),
-            title: z.string().optional(),
-            tags: z.array(z.string()).optional(),
-            priority: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional()
-        })
-        .optional(),
-    telegram: z
-        .object({
-            enabled: z.boolean().optional(),
-            botToken: z.string(),
-            chatId: z.string()
-        })
-        .optional(),
+    discord: z.object({ enabled: z.boolean(), url: z.string() }).optional(),
     webhookLogFilter: LogFilterSchema
 })
 
@@ -109,7 +72,7 @@ export const ConfigSchema = z.object({
     errorDiagnostics: z.boolean(),
     ensureStreakProtection: z.boolean(),
     autoClaimPunchcardRewards: z.boolean(),
-    contintueOnBotWarning: z.boolean().default(false),
+    continueOnBotWarning: z.boolean().default(false),
     skipNonPointTasks: z.boolean().default(true),
     accountDelay: DelaySchema.default({ min: '1min', max: '3min' }),
     workers: z.object({
@@ -134,9 +97,6 @@ export const ConfigSchema = z.object({
         .default({ urlReward: true, searchOnBing: true }),
     globalTimeout: NumberOrString,
     searchSettings: z.object({
-        scrollRandomResults: z.boolean(),
-        clickRandomResults: z.boolean(),
-        runOnZeroPoints: z.boolean().default(false),
         maxBonusSearches: z.number().default(110),
         parallelSearching: z.boolean(),
         clusterSearch: z.boolean().default(true),
@@ -233,16 +193,11 @@ const AccountProxySchema = z
 
 export const AccountSchema = z.object({
     email: z.string(),
-    password: z.string(),
+    password: z.string().default(''),
     totpSecret: z.string().optional(),
-    recoveryEmail: z.string(),
-    geoLocale: AccountCountrySchema,
-    langCode: AccountLanguageSchema,
-    proxy: AccountProxySchema,
-    saveFingerprint: z.object({
-        mobile: z.boolean(),
-        desktop: z.boolean()
-    })
+    recoveryEmail: z.string().default(''),
+    region: AccountCountrySchema.optional(),
+    proxy: AccountProxySchema.default({ proxyHttp: false, url: '', port: 0, password: '', username: '' })
 })
 
 const defaultConfig = ConfigSchema.parse(defaultConfigJson)

@@ -1,5 +1,32 @@
 import { BaseActivity } from '../BaseActivity'
+import type { ParsedOffer } from '../../../browser/ReactFunc'
 import type { BasePromotion } from '../../../interface/DashboardData'
+
+export function toBasePromotion(offer: ParsedOffer): BasePromotion {
+    return {
+        name: offer.offerId,
+        priority: 1,
+        attributes: {},
+        offerId: offer.offerId,
+        complete: offer.isCompleted,
+        counter: 0,
+        activityProgress: 0,
+        activityProgressMax: 0,
+        pointProgressMax: offer.points,
+        pointProgress: 0,
+        promotionType: 'urlreward',
+        promotionSubtype: offer.promotionSubtype ?? '',
+        title: offer.title || offer.offerId,
+        description: offer.description,
+        imageUrl: '',
+        destinationUrl: offer.destination,
+        hash: offer.hash ?? '',
+        activityType: String(offer.activityType ?? 11),
+        isHidden: false,
+        level: '',
+        exclusiveLockedFeatureStatus: ''
+    }
+}
 
 export class PromotionActivityRunner extends BaseActivity {
     public async run(promotions: BasePromotion[]): Promise<void> {
@@ -43,7 +70,7 @@ export class PromotionActivityRunner extends BaseActivity {
             return
         }
 
-        const isSearchOnBing = name.includes('exploreonbing')
+        const isSearchOnBing = name.includes('exploreonbing') || offerId.toLowerCase().includes('exploreonbing')
         if (isSearchOnBing && !this.bot.config.activities.searchOnBing) {
             this.logDisabled('SearchOnBing', offerId)
             return

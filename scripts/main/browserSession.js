@@ -1,7 +1,6 @@
 /* global window */
 
 import { chromium } from 'patchright'
-import { newInjectedContext } from 'fingerprint-injector'
 import {
     getDirname,
     getProjectRoot,
@@ -134,7 +133,7 @@ async function main() {
     for (const p of platformsToTry()) {
         try {
             const row = loadSessionRow(db, accountEmail, p)
-            if (row && (row.storageState || row.fingerprint)) {
+            if (row?.storageState) {
                 session = row
                 platform = p
                 break
@@ -152,11 +151,8 @@ async function main() {
     }
 
     const isMobile = platform === 'mobile'
-    const { storageState, fingerprint } = session
-    const useInjector = Boolean(fingerprint)
+    const { storageState } = session
     const cookieCount = storageState?.cookies?.length ?? 0
-    const screen = fingerprint?.fingerprint?.screen
-    const userAgent = fingerprint?.fingerprint?.navigator?.userAgent || fingerprint?.fingerprint?.userAgent || null
 
     const proxy = account ? buildProxyConfig(account) : null
     if (account?.proxy?.url && (!proxy || !proxy.server)) {
@@ -167,9 +163,6 @@ async function main() {
     log('INFO', `Session: ${accountEmail} (${platform})`)
     log('INFO', '  Engine: bundled patched Chromium')
     log('INFO', `  Cookies: ${cookieCount}`)
-    log('INFO', `  Fingerprint: ${fingerprint ? 'Yes' : 'No'}`)
-    log('INFO', `  Fingerprint injector: ${useInjector ? 'Yes' : 'No (real browser)'}`)
-    log('INFO', `  User-Agent: ${userAgent || 'Default'}`)
     log('INFO', `  Proxy: ${proxy ? 'Yes' : 'No'}`)
     log('INFO', `  Updated: ${session.updatedAt ? new Date(session.updatedAt).toISOString() : 'unknown'}`)
     log('INFO', 'Launching browser...')
@@ -188,47 +181,12 @@ async function main() {
         args: [...BROWSER_ARGS, ...sandboxArgs, ...certArgs]
     })
 
-    let context
-    if (useInjector && fingerprint) {
-        context = await newInjectedContext(browser, {
-            fingerprint,
-            newContextOptions: {
-                permissions: [],
-                ignoreHTTPSErrors: ignoreCertificateErrors,
-                ...(storageState ? { storageState } : {}),
-                ...(isMobile && screen
-                    ? {
-                          isMobile: true,
-                          hasTouch: true,
-                          deviceScaleFactor: screen.devicePixelRatio,
-                          viewport: { width: screen.width, height: screen.height },
-                          screen: { width: screen.width, height: screen.height }
-                      }
-                    : {})
-            }
-        })
-        log('SUCCESS', 'Fingerprint injected into browser context')
-    } else {
-        context = await browser.newContext({
-            permissions: [],
-            ignoreHTTPSErrors: ignoreCertificateErrors,
-            ...(storageState ? { storageState } : {}),
-            ...(isMobile
-                ? {
-                      isMobile: true,
-                      hasTouch: true,
-                      ...(userAgent ? { userAgent } : {}),
-                      ...(screen
-                          ? {
-                                deviceScaleFactor: screen.devicePixelRatio,
-                                viewport: { width: screen.width, height: screen.height },
-                                screen: { width: screen.width, height: screen.height }
-                            }
-                          : { viewport: { width: 375, height: 667 } })
-                  }
-                : {})
-        })
-    }
+    const context = await browser.newContext({
+        permissions: [],
+        ignoreHTTPSErrors: ignoreCertificateErrors,
+        ...(storageState ? { storageState } : {}),
+        ...(isMobile ? { isMobile: true, hasTouch: true, viewport: { width: 375, height: 667 } } : {})
+    })
 
     if (proxy) {
         await context.addInitScript(() => {

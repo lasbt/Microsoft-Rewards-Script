@@ -3,10 +3,8 @@ export interface Account {
     password: string
     totpSecret?: string
     recoveryEmail: string
-    geoLocale: string
-    langCode: string
+    region?: string
     proxy: AccountProxy
-    saveFingerprint: ConfigSaveFingerprint
 }
 
 export interface AccountProxy {
@@ -17,7 +15,3 @@ export interface AccountProxy {
     username: string
 }
 
-export interface ConfigSaveFingerprint {
-    mobile: boolean
-    desktop: boolean
-}

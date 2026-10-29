@@ -1,4 +1,4 @@
-import { accountIndexesFromEnv, envStrFrom, normalizeGeoLocale, normalizeLanguageCode } from '../env.js'
+import { parseAccountsJson } from '../env.js'
 
 function sanitizeProxyUrl(value) {
     try {
@@ -12,34 +12,25 @@ function sanitizeProxyUrl(value) {
 }
 
 export function loadAccounts(sourceEnv = process.env) {
-    const accounts = []
-
-    for (const i of accountIndexesFromEnv(sourceEnv)) {
-        const email = envStrFrom(sourceEnv, `ACCOUNT_${i}_EMAIL`)
-        if (!email) continue
-
-        const proxyUrl = envStrFrom(sourceEnv, `ACCOUNT_${i}_PROXY_URL`)
-        accounts.push({
-            index: i,
-            email,
-            emailKey: email, // internal history join key; removed before returning the response
-            geoLocale: normalizeGeoLocale(envStrFrom(sourceEnv, `ACCOUNT_${i}_GEO_LOCALE`) ?? 'auto'),
-            langCode: normalizeLanguageCode(envStrFrom(sourceEnv, `ACCOUNT_${i}_LANG_CODE`) ?? 'en'),
-            hasRecoveryEmail: Boolean(envStrFrom(sourceEnv, `ACCOUNT_${i}_RECOVERY_EMAIL`)),
-            hasTotp: Boolean(envStrFrom(sourceEnv, `ACCOUNT_${i}_TOTP_SECRET`)),
+    const sourceAccounts = parseAccountsJson(sourceEnv)
+    return sourceAccounts.map((account, index) => {
+        const proxyUrl = typeof account.proxy?.url === 'string' ? account.proxy.url.trim() : ''
+        return {
+            index: index + 1,
+            email: account.email.trim(),
+            emailKey: account.email.trim(),
+            region: account.region ?? null,
+            hasRecoveryEmail: Boolean(account.recoveryEmail),
+            hasTotp: Boolean(account.totpSecret),
             proxy: proxyUrl
                 ? {
                       url: sanitizeProxyUrl(proxyUrl),
-                      port: envStrFrom(sourceEnv, `ACCOUNT_${i}_PROXY_PORT`) ?? null,
-                      hasCredentials: Boolean(
-                          envStrFrom(sourceEnv, `ACCOUNT_${i}_PROXY_USERNAME`) &&
-                          envStrFrom(sourceEnv, `ACCOUNT_${i}_PROXY_PASSWORD`)
-                      )
+                      port: account.proxy.port ?? null,
+                      hasCredentials: Boolean(account.proxy.username && account.proxy.password)
                   }
                 : null
-        })
-    }
-    return accounts
+        }
+    })
 }
 
 export function buildSingleAccountEnv(accountIndex, sourceEnv = process.env) {
@@ -50,29 +41,17 @@ export function buildSingleAccountEnv(accountIndex, sourceEnv = process.env) {
         throw err
     }
 
-    const selectedPrefix = `ACCOUNT_${index}_`
-    const selected = Object.entries(sourceEnv).filter(([key]) => key.startsWith(selectedPrefix))
-    const email = envStrFrom(sourceEnv, `${selectedPrefix}EMAIL`)
-    if (!email) {
-        const err = new Error(`ACCOUNT_${index} is not configured.`)
+    const accounts = parseAccountsJson(sourceEnv)
+    const selected = accounts[index - 1]
+    if (!selected) {
+        const err = new Error(`Account ${index} is not configured.`)
         err.code = 'BAD_REQUEST'
         throw err
     }
 
-    const env = {}
-
-    for (const key of Object.keys(sourceEnv)) {
-        if (/^ACCOUNT_\d+_/.test(key)) env[key] = ''
-    }
-
-    for (const [key, value] of selected) {
-        const suffix = key.slice(selectedPrefix.length)
-        env[`ACCOUNT_1_${suffix}`] = value
-    }
-
     return {
-        env,
-        account: { index, email }
+        env: { ACCOUNTS_JSON: JSON.stringify([selected]) },
+        account: { index, email: selected.email }
     }
 }
 
@@ -90,6 +69,7 @@ export function buildExcludedAccountsEnv(excludedAccountIndexes, sourceEnv = pro
         throw err
     }
 
+    const sourceAccounts = parseAccountsJson(sourceEnv)
     const accounts = loadAccounts(sourceEnv)
     const knownIndexes = new Set(accounts.map(account => account.index))
     const unknown = excluded.filter(index => !knownIndexes.has(index))
@@ -109,19 +89,9 @@ export function buildExcludedAccountsEnv(excludedAccountIndexes, sourceEnv = pro
         throw err
     }
 
-    const env = {}
-    for (const key of Object.keys(sourceEnv)) {
-        if (/^ACCOUNT_\d+_/.test(key)) env[key] = ''
+    const env = {
+        ACCOUNTS_JSON: JSON.stringify(sourceAccounts.filter((_, index) => !excludedSet.has(index + 1)))
     }
-
-    included.forEach((account, position) => {
-        const sourcePrefix = `ACCOUNT_${account.index}_`
-        const targetPrefix = `ACCOUNT_${position + 1}_`
-        for (const [key, value] of Object.entries(sourceEnv)) {
-            if (!key.startsWith(sourcePrefix)) continue
-            env[`${targetPrefix}${key.slice(sourcePrefix.length)}`] = value
-        }
-    })
 
     return {
         env,

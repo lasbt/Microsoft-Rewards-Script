@@ -44,7 +44,6 @@ function toSession(row) {
         updatedAt:
             Number.isFinite(updatedAt) && !Number.isNaN(updatedDate.getTime()) ? updatedDate.toISOString() : null,
         hasStorageState: Boolean(row.storage_state),
-        hasFingerprint: Boolean(row.fingerprint),
         cookieCount: cookieCount(row.storage_state)
     }
 }
@@ -59,7 +58,7 @@ export function listStoredSessions(projectRoot, sessionPath) {
     try {
         const rows = db
             .prepare(
-                `SELECT email, platform, storage_state, fingerprint, updated_at
+                `SELECT email, platform, storage_state, updated_at
                  FROM sessions
                  ORDER BY LOWER(email), platform`
             )

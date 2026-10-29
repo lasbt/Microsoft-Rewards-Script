@@ -15,7 +15,6 @@ const POINTS_MAX_SEARCHES = 100
 const POINTS_STAGNANT_LIMIT = 10
 
 const SEARCH_BOX = '#sb_form_q'
-const RESULT_LINK = '#b_results .b_algo h2'
 
 interface SessionStats {
     totalGained: number
@@ -172,15 +171,6 @@ export class Search extends BaseActivity {
                 await page.keyboard.press('Enter')
                 await this.bot.utils.wait(3000)
 
-                if (this.bot.config.searchSettings.scrollRandomResults) {
-                    await this.bot.utils.wait(2000)
-                    await this.randomScroll(page, isMobile)
-                }
-                if (this.bot.config.searchSettings.clickRandomResults) {
-                    await this.bot.utils.wait(2000)
-                    await this.clickRandomLink(page, isMobile)
-                }
-
                 await this.bot.utils.wait(
                     this.bot.utils.randomDelay(
                         this.bot.config.searchSettings.searchDelay.min,
@@ -201,41 +191,6 @@ export class Search extends BaseActivity {
         }
     }
 
-    private async randomScroll(page: Page, isMobile: boolean) {
-        try {
-            await page.evaluate(() => {
-                const maxScroll = Math.max(1, document.body.scrollHeight - window.innerHeight)
-                window.scrollTo({ left: 0, top: Math.floor(Math.random() * maxScroll), behavior: 'auto' })
-            })
-        } catch (error) {
-            this.bot.logger.error(
-                isMobile,
-                'SEARCH-RANDOM-SCROLL',
-                `Failed during random scroll | ${error instanceof Error ? error.message : String(error)}`
-            )
-        }
-    }
-
-    private async clickRandomLink(page: Page, isMobile: boolean) {
-        try {
-            const searchPageUrl = page.url()
-            await this.bot.browser.utils.ghostClick(page, RESULT_LINK)
-            await this.bot.utils.wait(this.bot.config.searchSettings.searchResultVisitTime)
-
-            if (isMobile) {
-                await page.goto(searchPageUrl)
-            } else {
-                const newTab = await this.bot.browser.utils.getLatestTab(page)
-                await this.bot.browser.utils.closeTabs(newTab)
-            }
-        } catch (error) {
-            this.bot.logger.error(
-                isMobile,
-                'SEARCH-RANDOM-CLICK',
-                `Failed during random click | ${error instanceof Error ? error.message : String(error)}`
-            )
-        }
-    }
 }
 
 class PointsTracker implements SearchTracker {
@@ -244,14 +199,12 @@ class PointsTracker implements SearchTracker {
     public readonly stagnantLimit = POINTS_STAGNANT_LIMIT
 
     private missing: MissingSearchPoints = { mobilePoints: 0, desktopPoints: 0, edgePoints: 0, totalPoints: 0 }
-    private readonly runOnZeroPoints: boolean
     private readonly searchProgress: SearchProgress
 
     constructor(
         private bot: MicrosoftRewardsBot,
         private isMobile: boolean
     ) {
-        this.runOnZeroPoints = this.bot.config.searchSettings.runOnZeroPoints ?? false
         this.searchProgress = new SearchProgress(this.bot)
     }
 
@@ -264,19 +217,12 @@ class PointsTracker implements SearchTracker {
         )
 
         if (this.missing.totalPoints <= 0) {
-            if (!this.runOnZeroPoints) {
-                this.bot.logger.info(
-                    this.isMobile,
-                    this.context,
-                    'No search points to earn, skipping (runOnZeroPoints is disabled)'
-                )
-                return false
-            }
             this.bot.logger.info(
                 this.isMobile,
                 this.context,
-                'No search points reported, but runOnZeroPoints is enabled, searching anyway'
+                'No search points remain, skipping searches'
             )
+            return false
         }
         return true
     }
@@ -294,7 +240,7 @@ class PointsTracker implements SearchTracker {
     }
 
     done(): boolean {
-        return !this.runOnZeroPoints && this.missing.totalPoints <= 0
+        return this.missing.totalPoints <= 0
     }
 
     progress(): string {
